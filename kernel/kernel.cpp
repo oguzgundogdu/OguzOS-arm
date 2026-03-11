@@ -1,0 +1,93 @@
+#include "disk.h"
+#include "fs.h"
+#include "net.h"
+#include "netdev.h"
+#include "shell.h"
+#include "string.h"
+#include "uart.h"
+
+namespace {
+
+void print_banner() {
+  uart::puts("\033[2J\033[H"); // Clear screen
+
+  uart::puts("\033[1;36m");
+  uart::puts("  ___                   ___  ____  \n");
+  uart::puts(" / _ \\ __ _ _   _ ___  / _ \\/ ___| \n");
+  uart::puts("| | | / _` | | | |_ / | | | \\___ \\ \n");
+  uart::puts("| |_| | (_| | |_| |/ /  | |_| |___) |\n");
+  uart::puts(" \\___/ \\__, |\\__,_/___|  \\___/|____/ \n");
+  uart::puts("       |___/                         \n");
+  uart::puts("\033[0m\n");
+
+  uart::puts("\033[1;33m");
+  uart::puts("         OguzOS v1.0 - ARM64\n");
+  uart::puts("    Minimal Operating System for UTM\n");
+  uart::puts("\033[0m\n");
+
+  uart::puts("\033[0;37m");
+  uart::puts("  Architecture : AArch64 (ARM64)\n");
+  uart::puts("  Platform     : QEMU virt machine\n");
+  uart::puts("  Console      : PL011 UART\n");
+  if (disk::is_available()) {
+    uart::puts("  File System  : In-Memory FS + Disk\n");
+    uart::puts("  Disk         : virtio-blk (");
+    uart::put_int(static_cast<i64>(disk::get_capacity() / 2));
+    uart::puts(" KB)\n");
+  } else {
+    uart::puts("  File System  : In-Memory FS (no disk)\n");
+  }
+  if (netdev::is_available()) {
+    uart::puts("  Network      : virtio-net");
+    if (net::is_available())
+      uart::puts(" (DHCP configured)");
+    uart::putc('\n');
+  }
+  uart::puts("\033[0m\n");
+
+  uart::puts("  Welcome! Type \033[1mhelp\033[0m for available commands.\n");
+  uart::puts("  Type \033[1mcat /home/welcome.txt\033[0m to read the welcome "
+             "file.\n\n");
+
+  uart::puts("\033[0;90m");
+  uart::puts("  ─────────────────────────────────────\n");
+  uart::puts("\033[0m\n");
+}
+
+} // anonymous namespace
+
+extern "C" void kernel_main() {
+  // Initialize UART first (for any debug output)
+  uart::init();
+
+  // Initialize disk (virtio-blk)
+  bool has_disk = disk::init();
+
+  // Initialize network (virtio-net + DHCP)
+  netdev::init();
+  if (netdev::is_available()) {
+    net::init();
+  }
+
+  // Try loading filesystem from disk, fall back to default init
+  if (has_disk && fs::load_from_disk()) {
+    // Restored filesystem from disk
+  } else {
+    fs::init();
+  }
+
+  // Print welcome banner
+  print_banner();
+
+  // Initialize and run shell (never returns)
+  shell::init();
+  shell::run();
+}
+
+// C++ ABI support for freestanding environment
+extern "C" void __cxa_pure_virtual() {
+  for (;;)
+    ;
+}
+extern "C" void __cxa_atexit() {}
+extern "C" void __dso_handle() {}

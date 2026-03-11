@@ -1,0 +1,21 @@
+# Build output
+build/
+
+# Disk images
+*.img
+
+# macOS
+.DS_Store
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Claude Code
+.claude/
+
+# Clangd cache
+.cache/

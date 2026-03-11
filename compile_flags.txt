@@ -1,0 +1,13 @@
+-std=c++17
+-ffreestanding
+-nostdlib
+-fno-exceptions
+-fno-rtti
+-Iarch
+-Ikernel
+-Idrivers
+-Ifs
+-Ishell
+-Ilib
+-Inet
+--target=aarch64-none-elf
