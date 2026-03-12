@@ -25,6 +25,7 @@ constexpr u32 REG_QUEUE_NOTIFY = 0x050;
 constexpr u32 REG_INT_STATUS = 0x060;
 constexpr u32 REG_INT_ACK = 0x064;
 constexpr u32 REG_STATUS = 0x070;
+constexpr u32 REG_CONFIG = 0x100;
 
 constexpr u32 STATUS_ACK = 1;
 constexpr u32 STATUS_DRIVER = 2;
@@ -119,6 +120,16 @@ void post_event_buffers() {
   mmio(REG_QUEUE_NOTIFY) = 0;
 }
 
+// Check if a virtio-input device is a tablet (has EV_ABS capability)
+bool is_tablet_device(u64 addr) {
+  volatile u8 *cfg = reinterpret_cast<volatile u8 *>(addr + REG_CONFIG);
+  cfg[0] = 0x11; // VIRTIO_INPUT_CFG_EV_BITS (select)
+  cfg[1] = EV_ABS; // subsel
+  asm volatile("dmb ish" ::: "memory");
+  u8 size = cfg[2];
+  return (size > 0); // Has absolute axes → it's a tablet/mouse
+}
+
 bool init_device(u64 addr) {
   base_addr = addr;
 
@@ -129,6 +140,10 @@ bool init_device(u64 addr) {
   u32 version = mmio(REG_VERSION);
   u32 dev_id = mmio(REG_DEVICE_ID);
   if (dev_id != 18) // 18 = virtio-input
+    return false;
+
+  // Only claim tablet/mouse devices (not keyboards)
+  if (!is_tablet_device(addr))
     return false;
 
   // Clear queue memory and set up pointers

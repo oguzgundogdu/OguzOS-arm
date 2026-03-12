@@ -30,11 +30,12 @@ SHELL_DIR   = shell
 LIB_DIR     = lib
 NET_DIR     = net
 GUI_DIR     = gui
+APPS_DIR    = apps
 BUILD_DIR   = build
 
 # Include paths (so #include "file.h" works across directories)
 INCLUDES = -I$(ARCH_DIR) -I$(KERNEL_DIR) -I$(DRIVERS_DIR) -I$(FS_DIR) \
-           -I$(SHELL_DIR) -I$(LIB_DIR) -I$(NET_DIR) -I$(GUI_DIR)
+           -I$(SHELL_DIR) -I$(LIB_DIR) -I$(NET_DIR) -I$(GUI_DIR) -I$(APPS_DIR)
 
 # Flags for freestanding C++ (no standard library)
 COMMON_FLAGS = -ffreestanding -nostdlib -nostartfiles -mgeneral-regs-only \
@@ -48,6 +49,7 @@ LDFLAGS = -T $(ARCH_DIR)/linker.ld -nostdlib
 
 # Object files (listed explicitly to avoid basename collisions)
 OBJS = $(BUILD_DIR)/boot.o \
+       $(BUILD_DIR)/exception.o \
        $(BUILD_DIR)/uart.o \
        $(BUILD_DIR)/disk.o \
        $(BUILD_DIR)/netdev.o \
@@ -56,8 +58,12 @@ OBJS = $(BUILD_DIR)/boot.o \
        $(BUILD_DIR)/netstack.o \
        $(BUILD_DIR)/fb.o \
        $(BUILD_DIR)/mouse.o \
+       $(BUILD_DIR)/keyboard.o \
        $(BUILD_DIR)/graphics.o \
        $(BUILD_DIR)/gui.o \
+       $(BUILD_DIR)/registry.o \
+       $(BUILD_DIR)/notepad.o \
+       $(BUILD_DIR)/terminal.o \
        $(BUILD_DIR)/shell.o \
        $(BUILD_DIR)/kernel.o
 
@@ -86,6 +92,9 @@ $(KERNEL_BIN): $(KERNEL_ELF)
 $(BUILD_DIR)/boot.o: $(ARCH_DIR)/boot.S | $(BUILD_DIR)
 	$(AS) $(ASFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/exception.o: $(ARCH_DIR)/exception.S | $(BUILD_DIR)
+	$(AS) $(ASFLAGS) -c $< -o $@
+
 # C++ rules
 $(BUILD_DIR)/uart.o: $(DRIVERS_DIR)/uart.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
@@ -111,10 +120,22 @@ $(BUILD_DIR)/fs.o: $(FS_DIR)/fs.cpp | $(BUILD_DIR)
 $(BUILD_DIR)/netstack.o: $(NET_DIR)/net.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/keyboard.o: $(DRIVERS_DIR)/keyboard.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/graphics.o: $(GUI_DIR)/graphics.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/gui.o: $(GUI_DIR)/gui.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/registry.o: $(APPS_DIR)/registry.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/notepad.o: $(APPS_DIR)/notepad.ogz.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/terminal.o: $(APPS_DIR)/terminal.ogz.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/shell.o: $(SHELL_DIR)/shell.cpp | $(BUILD_DIR)
@@ -160,7 +181,8 @@ gui: $(KERNEL_BIN) $(DISK_IMG)
 		-netdev user,id=net0 \
 		-device virtio-net-device,netdev=net0 \
 		-device ramfb \
-		-device virtio-tablet-device
+		-device virtio-tablet-device \
+		-device virtio-keyboard-device
 
 # Run with QEMU and GDB server
 debug: $(KERNEL_BIN)

@@ -39,7 +39,8 @@ if [ "$1" = "gui" ]; then
         "${COMMON_ARGS[@]}" \
         -serial stdio \
         -device ramfb \
-        -device virtio-tablet-device
+        -device virtio-tablet-device \
+        -device virtio-keyboard-device
 else
     echo "Starting OguzOS... (Press Ctrl+A then X to exit)"
     echo ""

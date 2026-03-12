@@ -2,12 +2,20 @@
 #include "fb.h"
 #include "fs.h"
 #include "gui.h"
+#include "keyboard.h"
 #include "mouse.h"
 #include "net.h"
 #include "netdev.h"
+#include "registry.h"
 #include "shell.h"
 #include "string.h"
 #include "uart.h"
+
+// App registration (defined in apps/*.ogz.cpp)
+namespace apps {
+void register_notepad();
+void register_terminal();
+}
 
 namespace {
 
@@ -72,6 +80,9 @@ extern "C" void kernel_main() {
   // Initialize mouse (virtio-tablet, only present with 'make gui')
   mouse::init();
 
+  // Initialize keyboard (virtio-keyboard, only present with 'make gui')
+  keyboard::init();
+
   // Initialize network (virtio-net + DHCP)
   netdev::init();
   if (netdev::is_available()) {
@@ -84,6 +95,10 @@ extern "C" void kernel_main() {
   } else {
     fs::init();
   }
+
+  // Register .ogz apps
+  apps::register_notepad();
+  apps::register_terminal();
 
   // Print welcome banner
   print_banner();

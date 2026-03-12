@@ -29,6 +29,11 @@ bss_loop:
     b       bss_loop
 bss_done:
 
+    /* Install exception vector table */
+    ldr     x0, =exception_vectors
+    msr     vbar_el1, x0
+    isb
+
     /* Jump to C++ kernel entry */
     bl      kernel_main
 

@@ -1,8 +1,12 @@
 #include "gui.h"
+#include "app.h"
+#include "exception.h"
 #include "fb.h"
 #include "fs.h"
 #include "graphics.h"
+#include "keyboard.h"
 #include "mouse.h"
+#include "registry.h"
 #include "string.h"
 #include "types.h"
 #include "uart.h"
@@ -30,7 +34,7 @@ constexpr i32 TASKBAR_H = 28;
 constexpr i32 TITLEBAR_H = 20;
 
 // ── Window types ────────────────────────────────────────────────────────────
-enum WinType { WIN_EXPLORER, WIN_TEXTVIEW };
+enum WinType { WIN_EXPLORER, WIN_TEXTVIEW, WIN_APP };
 
 struct Window {
   i32 x, y, w, h;
@@ -46,6 +50,10 @@ struct Window {
 
   // Text viewer state
   char view_text[4096];
+
+  // App state (WIN_APP only)
+  OgzApp *app;
+  u8 app_state[4096]; // private state for the app
 };
 
 constexpr i32 MAX_WINDOWS = 8;
@@ -70,13 +78,65 @@ constexpr i32 MENU_W = 180;
 constexpr i32 MENU_ITEM_H = 24;
 constexpr i32 MENU_HEADER_H = 28;
 
-// Menu item IDs
-enum MenuItem { MI_EXPLORER = 0, MI_ABOUT, MI_SEP, MI_TERMINAL, MI_SHUTDOWN, MI_COUNT };
+// Menu: built dynamically from apps registry + fixed items
+// Layout: [apps...] [---] [File Explorer] [About] [---] [Shutdown]
+constexpr i32 MAX_MENU_ITEMS = 16;
+const char *menu_labels[MAX_MENU_ITEMS];
+const char *menu_app_ids[MAX_MENU_ITEMS]; // non-null = app launch
+i32 menu_item_count = 0;
 
-const char *menu_labels[MI_COUNT] = {
-    "File Explorer", "About OguzOS", "---", "Terminal (Esc)", "Shutdown"};
+// Special indices (set during menu build)
+i32 mi_explorer = -1;
+i32 mi_about = -1;
+i32 mi_shutdown = -1;
 
-constexpr i32 MENU_H = MENU_HEADER_H + MI_COUNT * MENU_ITEM_H + 2;
+i32 menu_h_computed = 0;
+
+void build_menu() {
+  menu_item_count = 0;
+  str::memset(menu_app_ids, 0, sizeof(menu_app_ids));
+
+  // Add registered .ogz apps
+  i32 nap = apps::count();
+  for (i32 i = 0; i < nap && menu_item_count < MAX_MENU_ITEMS - 5; i++) {
+    const OgzApp *a = apps::get(i);
+    if (a) {
+      menu_labels[menu_item_count] = a->name;
+      menu_app_ids[menu_item_count] = a->id;
+      menu_item_count++;
+    }
+  }
+
+  // Separator
+  menu_labels[menu_item_count] = "---";
+  menu_app_ids[menu_item_count] = nullptr;
+  menu_item_count++;
+
+  // File Explorer
+  mi_explorer = menu_item_count;
+  menu_labels[menu_item_count] = "File Explorer";
+  menu_app_ids[menu_item_count] = nullptr;
+  menu_item_count++;
+
+  // About
+  mi_about = menu_item_count;
+  menu_labels[menu_item_count] = "About OguzOS";
+  menu_app_ids[menu_item_count] = nullptr;
+  menu_item_count++;
+
+  // Separator
+  menu_labels[menu_item_count] = "---";
+  menu_app_ids[menu_item_count] = nullptr;
+  menu_item_count++;
+
+  // Shutdown
+  mi_shutdown = menu_item_count;
+  menu_labels[menu_item_count] = "Shutdown";
+  menu_app_ids[menu_item_count] = nullptr;
+  menu_item_count++;
+
+  menu_h_computed = MENU_HEADER_H + menu_item_count * MENU_ITEM_H + 2;
+}
 
 constexpr u32 COL_MENU_BG = 0x003A3A3A;
 constexpr u32 COL_MENU_HOVER = 0x004488CC;
@@ -164,6 +224,27 @@ void open_text_viewer(const char *title, const char *text) {
   i32 idx = create_window(title, 100, 60, 380, 280, WIN_TEXTVIEW);
   if (idx >= 0)
     str::ncpy(windows[idx].view_text, text, 4095);
+}
+
+void close_window(i32 idx); // forward declaration
+
+void open_app(const char *app_id) {
+  const OgzApp *app = apps::find(app_id);
+  if (!app)
+    return;
+  i32 idx = create_window(app->name, 80, 30, app->default_w, app->default_h,
+                           WIN_APP);
+  if (idx < 0)
+    return;
+  windows[idx].app = const_cast<OgzApp *>(app);
+  str::memset(windows[idx].app_state, 0, sizeof(windows[idx].app_state));
+  if (try_enter() == 0) {
+    app->on_open(windows[idx].app_state);
+    try_leave();
+  } else {
+    // App crashed during open — remove the window
+    close_window(idx);
+  }
 }
 
 void close_window(i32 idx) {
@@ -465,11 +546,11 @@ void draw_start_menu() {
 
   i32 sh = static_cast<i32>(fb::height());
   i32 mx = 2;
-  i32 my = sh - TASKBAR_H - MENU_H;
+  i32 my = sh - TASKBAR_H - menu_h_computed;
 
   // Background + border
-  gfx::fill_rect(mx, my, MENU_W, MENU_H, COL_MENU_BG);
-  gfx::rect(mx, my, MENU_W, MENU_H, 0x00555555);
+  gfx::fill_rect(mx, my, MENU_W, menu_h_computed, COL_MENU_BG);
+  gfx::rect(mx, my, MENU_W, menu_h_computed, 0x00555555);
 
   // Header bar
   gfx::fill_rect(mx + 1, my + 1, MENU_W - 2, MENU_HEADER_H - 1, 0x00445577);
@@ -479,7 +560,7 @@ void draw_start_menu() {
   // Menu items
   i32 iy = my + MENU_HEADER_H + 1;
 
-  for (i32 i = 0; i < MI_COUNT; i++) {
+  for (i32 i = 0; i < menu_item_count; i++) {
     bool is_sep = (menu_labels[i][0] == '-');
     bool hovered = (start_menu_hover == i && !is_sep);
 
@@ -508,6 +589,21 @@ void render() {
     case WIN_TEXTVIEW:
       draw_text_viewer(windows[i]);
       break;
+    case WIN_APP:
+      draw_window_frame(windows[i]);
+      if (windows[i].app && windows[i].app->on_draw) {
+        if (try_enter() == 0) {
+          windows[i].app->on_draw(
+              windows[i].app_state, windows[i].x,
+              windows[i].y + TITLEBAR_H, windows[i].w,
+              windows[i].h - TITLEBAR_H);
+          try_leave();
+        } else {
+          close_window(i);
+          i--;
+        }
+      }
+      break;
     }
   }
   draw_taskbar();
@@ -520,15 +616,24 @@ void handle_menu_click(i32 item) {
   start_menu_open = false;
   start_menu_hover = -1;
 
-  switch (item) {
-  case MI_EXPLORER:
+  if (item < 0 || item >= menu_item_count)
+    return;
+
+  // Check if it's an app launch
+  if (menu_app_ids[item]) {
+    open_app(menu_app_ids[item]);
+    return;
+  }
+
+  // Fixed menu items
+  if (item == mi_explorer) {
     open_explorer("/");
-    break;
-  case MI_ABOUT:
+  } else if (item == mi_about) {
     open_text_viewer("About OguzOS",
                      "OguzOS v1.0\n"
                      "A minimal ARM64 operating system\n\n"
                      "Features:\n"
+                     "  - .ogz application framework\n"
                      "  - Window manager\n"
                      "  - File explorer\n"
                      "  - In-memory filesystem\n"
@@ -538,22 +643,12 @@ void handle_menu_click(i32 item) {
                      "Built with freestanding C++17\n"
                      "No standard library, no OS beneath.\n\n"
                      "Press Q to close this window.");
-    break;
-  case MI_TERMINAL:
-    should_exit = true;
-    break;
-  case MI_SHUTDOWN:
-    // PSCI SYSTEM_OFF — powers off the QEMU virtual machine
-    // Function ID 0x84000008, called via HVC on QEMU virt
+  } else if (item == mi_shutdown) {
     asm volatile("movz x0, #0x8400, lsl #16\n"
                  "movk x0, #0x0008\n"
                  "hvc #0\n" ::: "x0");
-    // If HVC somehow returns, halt the CPU
     for (;;)
       asm volatile("wfi");
-    break;
-  default:
-    break;
   }
 }
 
@@ -563,12 +658,12 @@ void handle_click(i32 x, i32 y) {
   // Start menu click handling
   if (start_menu_open) {
     i32 mx_menu = 2;
-    i32 my_menu = sh - TASKBAR_H - MENU_H;
+    i32 my_menu = sh - TASKBAR_H - menu_h_computed;
 
     if (x >= mx_menu && x < mx_menu + MENU_W && y >= my_menu + MENU_HEADER_H &&
-        y < my_menu + MENU_H) {
+        y < my_menu + menu_h_computed) {
       i32 item = (y - my_menu - MENU_HEADER_H - 1) / MENU_ITEM_H;
-      if (item >= 0 && item < MI_COUNT) {
+      if (item >= 0 && item < menu_item_count) {
         bool is_sep = (menu_labels[item][0] == '-');
         if (!is_sep)
           handle_menu_click(item);
@@ -672,6 +767,7 @@ void run() {
   should_exit = false;
 
   gfx::init();
+  build_menu();
   open_explorer("/");
 
   u64 last_click_time = 0;
@@ -690,9 +786,9 @@ void run() {
         if (start_menu_open) {
           i32 sh = static_cast<i32>(fb::height());
           i32 menu_x = 2;
-          i32 menu_y = sh - TASKBAR_H - MENU_H + MENU_HEADER_H + 1;
+          i32 menu_y = sh - TASKBAR_H - menu_h_computed + MENU_HEADER_H + 1;
           if (mx >= menu_x && mx < menu_x + MENU_W && my >= menu_y &&
-              my < menu_y + MI_COUNT * MENU_ITEM_H) {
+              my < menu_y + menu_item_count * MENU_ITEM_H) {
             start_menu_hover = (my - menu_y) / MENU_ITEM_H;
           } else {
             start_menu_hover = -1;
@@ -742,40 +838,47 @@ void run() {
       prev_mouse_left = ml;
     }
 
-    // ── Keyboard input (UART) ─────────────────────────────────────────
-    char key;
-    if (uart_try_getc(key)) {
-      if (key == 0x1B) {
-        // Escape or arrow-key sequence
-        bool is_seq = false;
-        for (int wait = 0; wait < 10000; wait++) {
-          char k2;
-          if (uart_try_getc(k2)) {
-            if (k2 == '[') {
-              for (int w2 = 0; w2 < 10000; w2++) {
-                char k3;
-                if (uart_try_getc(k3)) {
-                  is_seq = true;
-                  if (active_window >= 0 &&
-                      windows[active_window].type == WIN_EXPLORER) {
-                    Window &w = windows[active_window];
-                    i32 total = explorer_item_count(w);
-                    if (k3 == 'A' && w.selected > 0)
-                      w.selected--; // Up
-                    else if (k3 == 'B' && w.selected < total - 1)
-                      w.selected++; // Down
-                  }
-                  needs_redraw = true;
-                  break;
-                }
-              }
-            }
-            break;
+    // ── Helper: handle arrow key ──────────────────────────────────────
+    auto handle_arrow = [&](char dir) {
+      if (active_window >= 0) {
+        Window &w = windows[active_window];
+        if (w.type == WIN_EXPLORER) {
+          i32 total = explorer_item_count(w);
+          if (dir == 'A' && w.selected > 0)
+            w.selected--;
+          else if (dir == 'B' && w.selected < total - 1)
+            w.selected++;
+        } else if (w.type == WIN_APP && w.app && w.app->on_arrow) {
+          if (try_enter() == 0) {
+            w.app->on_arrow(w.app_state, dir);
+            try_leave();
+          } else {
+            close_window(active_window);
           }
         }
-        if (!is_seq) {
-          // Pure Escape → exit GUI
-          return;
+      }
+      needs_redraw = true;
+    };
+
+    // ── Helper: handle regular key ──────────────────────────────────
+    auto handle_key = [&](char key) {
+      if (key == '\t') {
+        if (window_count > 1) {
+          bring_to_front(0);
+          needs_redraw = true;
+        }
+      } else if (active_window >= 0 &&
+                 windows[active_window].type == WIN_APP) {
+        Window &w = windows[active_window];
+        if (w.app && w.app->on_key) {
+          if (try_enter() == 0) {
+            if (w.app->on_key(w.app_state, key))
+              needs_redraw = true;
+            try_leave();
+          } else {
+            close_window(active_window);
+            needs_redraw = true;
+          }
         }
       } else if (key == '\r' || key == '\n') {
         if (active_window >= 0 &&
@@ -789,17 +892,52 @@ void run() {
           close_window(active_window);
           needs_redraw = true;
         }
-      } else if (key == 'n' || key == 'N') {
-        // Open new explorer window
-        open_explorer("/");
-        needs_redraw = true;
-      } else if (key == '\t') {
-        // Tab → cycle windows
-        if (window_count > 1) {
-          bring_to_front(0);
-          needs_redraw = true;
-        }
       }
+    };
+
+    // ── Keyboard input (UART serial) ─────────────────────────────────
+    char key;
+    if (uart_try_getc(key)) {
+      if (key == 0x1B) {
+        // Escape or arrow-key sequence
+        bool is_seq = false;
+        for (int wait = 0; wait < 10000; wait++) {
+          char k2;
+          if (uart_try_getc(k2)) {
+            if (k2 == '[') {
+              for (int w2 = 0; w2 < 10000; w2++) {
+                char k3;
+                if (uart_try_getc(k3)) {
+                  is_seq = true;
+                  handle_arrow(k3);
+                  break;
+                }
+              }
+            }
+            break;
+          }
+        }
+        if (!is_seq) {
+          if (start_menu_open) {
+            start_menu_open = false;
+            start_menu_hover = -1;
+            needs_redraw = true;
+          }
+        }
+      } else {
+        handle_key(key);
+      }
+    }
+
+    // ── Keyboard input (virtio-keyboard from QEMU GUI window) ────────
+    keyboard::poll();
+    {
+      char vk;
+      while (keyboard::get_key(vk))
+        handle_key(vk);
+      char arrow;
+      while (keyboard::get_arrow(arrow))
+        handle_arrow(arrow);
     }
 
     // ── Exit check ─────────────────────────────────────────────────────
