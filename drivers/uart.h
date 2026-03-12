@@ -16,4 +16,7 @@ void puts(const char *str);
 void put_hex(u64 value);
 void put_int(i64 value);
 
+// Non-blocking: returns true and sets c if data available
+bool try_getc(char &c);
+
 } // namespace uart

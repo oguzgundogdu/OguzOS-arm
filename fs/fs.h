@@ -77,4 +77,10 @@ bool sync_to_disk();
 // Load filesystem from disk (returns false if no valid FS found)
 bool load_from_disk();
 
+// GUI accessors: resolve a path to a node index (-1 if not found)
+i32 resolve(const char *path);
+
+// GUI accessors: get node by index (nullptr if invalid)
+const Node *get_node(i32 idx);
+
 } // namespace fs

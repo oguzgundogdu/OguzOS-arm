@@ -29,11 +29,12 @@ FS_DIR      = fs
 SHELL_DIR   = shell
 LIB_DIR     = lib
 NET_DIR     = net
+GUI_DIR     = gui
 BUILD_DIR   = build
 
 # Include paths (so #include "file.h" works across directories)
 INCLUDES = -I$(ARCH_DIR) -I$(KERNEL_DIR) -I$(DRIVERS_DIR) -I$(FS_DIR) \
-           -I$(SHELL_DIR) -I$(LIB_DIR) -I$(NET_DIR)
+           -I$(SHELL_DIR) -I$(LIB_DIR) -I$(NET_DIR) -I$(GUI_DIR)
 
 # Flags for freestanding C++ (no standard library)
 COMMON_FLAGS = -ffreestanding -nostdlib -nostartfiles -mgeneral-regs-only \
@@ -53,6 +54,10 @@ OBJS = $(BUILD_DIR)/boot.o \
        $(BUILD_DIR)/string.o \
        $(BUILD_DIR)/fs.o \
        $(BUILD_DIR)/netstack.o \
+       $(BUILD_DIR)/fb.o \
+       $(BUILD_DIR)/mouse.o \
+       $(BUILD_DIR)/graphics.o \
+       $(BUILD_DIR)/gui.o \
        $(BUILD_DIR)/shell.o \
        $(BUILD_DIR)/kernel.o
 
@@ -60,7 +65,7 @@ TARGET = oguzos
 KERNEL_ELF = $(BUILD_DIR)/$(TARGET).elf
 KERNEL_BIN = $(BUILD_DIR)/$(TARGET).bin
 
-.PHONY: all clean run debug dump distclean
+.PHONY: all clean run gui debug dump distclean
 
 all: $(KERNEL_BIN)
 
@@ -91,6 +96,12 @@ $(BUILD_DIR)/disk.o: $(DRIVERS_DIR)/disk.cpp | $(BUILD_DIR)
 $(BUILD_DIR)/netdev.o: $(DRIVERS_DIR)/net.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/fb.o: $(DRIVERS_DIR)/fb.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/mouse.o: $(DRIVERS_DIR)/mouse.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/string.o: $(LIB_DIR)/string.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -98,6 +109,12 @@ $(BUILD_DIR)/fs.o: $(FS_DIR)/fs.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/netstack.o: $(NET_DIR)/net.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/graphics.o: $(GUI_DIR)/graphics.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/gui.o: $(GUI_DIR)/gui.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/shell.o: $(SHELL_DIR)/shell.cpp | $(BUILD_DIR)
@@ -117,12 +134,12 @@ $(DISK_IMG):
 	dd if=/dev/zero of=$@ bs=1m count=$(DISK_SIZE_MB) 2>/dev/null
 	@echo "Created $(DISK_IMG) ($(DISK_SIZE_MB) MB)"
 
-# Run with QEMU (for testing without UTM)
+# Run with QEMU — text-only mode (no GUI)
 run: $(KERNEL_BIN) $(DISK_IMG)
 	qemu-system-aarch64 \
 		-machine virt \
 		-cpu cortex-a72 \
-		-m 128M \
+		-m 256M \
 		-nographic \
 		-kernel $(KERNEL_BIN) \
 		-drive file=$(DISK_IMG),if=none,id=hd0,format=raw \
@@ -130,12 +147,27 @@ run: $(KERNEL_BIN) $(DISK_IMG)
 		-netdev user,id=net0 \
 		-device virtio-net-device,netdev=net0
 
+# Run with QEMU — graphical mode (ramfb + mouse, type 'gui' in shell)
+gui: $(KERNEL_BIN) $(DISK_IMG)
+	qemu-system-aarch64 \
+		-machine virt \
+		-cpu cortex-a72 \
+		-m 256M \
+		-serial stdio \
+		-kernel $(KERNEL_BIN) \
+		-drive file=$(DISK_IMG),if=none,id=hd0,format=raw \
+		-device virtio-blk-device,drive=hd0 \
+		-netdev user,id=net0 \
+		-device virtio-net-device,netdev=net0 \
+		-device ramfb \
+		-device virtio-tablet-device
+
 # Run with QEMU and GDB server
 debug: $(KERNEL_BIN)
 	qemu-system-aarch64 \
 		-machine virt \
 		-cpu cortex-a72 \
-		-m 128M \
+		-m 256M \
 		-nographic \
 		-kernel $(KERNEL_BIN) \
 		-drive file=$(DISK_IMG),if=none,id=hd0,format=raw \

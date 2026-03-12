@@ -1,5 +1,8 @@
 #include "disk.h"
+#include "fb.h"
 #include "fs.h"
+#include "gui.h"
+#include "mouse.h"
 #include "net.h"
 #include "netdev.h"
 #include "shell.h"
@@ -63,6 +66,12 @@ extern "C" void kernel_main() {
   // Initialize disk (virtio-blk)
   bool has_disk = disk::init();
 
+  // Initialize framebuffer (ramfb, only present with 'make gui')
+  fb::init();
+
+  // Initialize mouse (virtio-tablet, only present with 'make gui')
+  mouse::init();
+
   // Initialize network (virtio-net + DHCP)
   netdev::init();
   if (netdev::is_available()) {
@@ -78,6 +87,12 @@ extern "C" void kernel_main() {
 
   // Print welcome banner
   print_banner();
+
+  // If framebuffer is available, launch GUI directly
+  if (fb::is_available()) {
+    gui::run();
+    // GUI exited (Terminal/Shutdown) → fall through to shell
+  }
 
   // Initialize and run shell (never returns)
   shell::init();

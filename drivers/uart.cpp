@@ -100,4 +100,11 @@ void put_int(i64 value) {
   }
 }
 
+bool try_getc(char &c) {
+  if (*reg(UARTFR) & FR_RXFE)
+    return false;
+  c = static_cast<char>(*reg(UARTDR) & 0xFF);
+  return true;
+}
+
 } // namespace uart

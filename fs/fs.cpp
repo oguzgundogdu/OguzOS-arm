@@ -379,6 +379,16 @@ bool sync_to_disk() {
   return true;
 }
 
+i32 resolve(const char *path) { return resolve_path(path); }
+
+const Node *get_node(i32 idx) {
+  if (idx < 0 || idx >= static_cast<i32>(MAX_NODES))
+    return nullptr;
+  if (!nodes[idx].used)
+    return nullptr;
+  return &nodes[idx];
+}
+
 bool load_from_disk() {
   if (!disk::is_available())
     return false;

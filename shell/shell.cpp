@@ -1,6 +1,8 @@
 #include "shell.h"
 #include "disk.h"
+#include "fb.h"
 #include "fs.h"
+#include "gui.h"
 #include "net.h"
 #include "string.h"
 #include "types.h"
@@ -98,6 +100,7 @@ void cmd_help() {
   uart::puts(
       "  \033[1mcurl\033[0m <url>        Fetch a URL via HTTP (GET)\n");
   uart::puts("\n  \033[1;36m-- System --\033[0m\n");
+  uart::puts("  \033[1mgui\033[0m               Launch graphical desktop\n");
   uart::puts("  \033[1mhalt\033[0m              Sync & halt the system\n");
   uart::puts("  \033[1mreboot\033[0m            Sync & reboot\n");
   uart::putc('\n');
@@ -315,6 +318,18 @@ void cmd_halt() {
   }
 }
 
+void cmd_gui() {
+  if (!fb::is_available()) {
+    uart::puts("gui: framebuffer not available\n");
+    uart::puts("  Run with: make gui\n");
+    return;
+  }
+  uart::puts("Entering GUI mode... (press Escape to return)\n");
+  gui::run();
+  uart::puts("\033[2J\033[H"); // clear screen on return
+  uart::puts("Returned to shell.\n");
+}
+
 void cmd_reboot() {
   if (disk::is_available()) {
     uart::puts("Syncing to disk... ");
@@ -385,6 +400,8 @@ void execute(char *input) {
     cmd_dhcp();
   else if (str::cmp(cmd, "curl") == 0)
     cmd_curl(argc, args);
+  else if (str::cmp(cmd, "gui") == 0)
+    cmd_gui();
   else if (str::cmp(cmd, "halt") == 0)
     cmd_halt();
   else if (str::cmp(cmd, "reboot") == 0)
