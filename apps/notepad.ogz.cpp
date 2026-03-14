@@ -81,9 +81,11 @@ void notepad_open(u8 *state) {
 void notepad_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
   auto *s = reinterpret_cast<NotepadState *>(state);
 
-  constexpr i32 LINE_H = 10;
-  constexpr i32 LINENUM_W = 32;
-  constexpr i32 STATUS_H = 16;
+  i32 fw = gfx::font_w();
+  i32 fh = gfx::font_h();
+  i32 LINE_H = fh + 2;
+  i32 LINENUM_W = fw * 4; // 4 digits
+  i32 STATUS_H = fh + 6;
 
   // Status bar at bottom
   i32 status_y = cy + ch - STATUS_H;
@@ -91,9 +93,7 @@ void notepad_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
   char status[80];
   i32 cur_line = count_lines(s->text, s->cursor) + 1;
   i32 cur_col = cursor_col(s->text, s->cursor) + 1;
-  // Build status: "Ln X, Col Y | filename"
   str::ncpy(status, "Ln ", 79);
-  // Simple int to string helper (appends decimal digits to dst)
   auto append_int = [](char *dst, i32 val) {
     char tmp[12];
     i32 i = 0;
@@ -102,7 +102,6 @@ void notepad_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
     } else {
       while (val > 0) { tmp[i++] = '0' + (val % 10); val /= 10; }
     }
-    // Reverse and append
     usize len = str::len(dst);
     for (i32 j = i - 1; j >= 0; j--)
       dst[len++] = tmp[j];
@@ -113,7 +112,7 @@ void notepad_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
   append_int(status, cur_col);
   if (s->dirty)
     str::cat(status, " [modified]");
-  gfx::draw_text(cx + 4, status_y + 4, status, COL_STATUS_TEXT, COL_STATUS);
+  gfx::draw_text(cx + 4, status_y + 3, status, COL_STATUS_TEXT, COL_STATUS);
 
   // Text area
   i32 text_h = ch - STATUS_H;
@@ -138,7 +137,6 @@ void notepad_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
   i32 text_x = cx + LINENUM_W + 4;
   i32 draw_line = 0;
 
-  // Draw line number for first visible line
   auto draw_linenum = [&](i32 ln, i32 y) {
     char lnbuf[8];
     i32 v = ln + 1, i = 0;
@@ -148,7 +146,7 @@ void notepad_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
     i32 j = 0;
     while (i > 0) lnbuf[j++] = tmp[--i];
     lnbuf[j] = '\0';
-    i32 xoff = LINENUM_W - 4 - j * 8;
+    i32 xoff = LINENUM_W - 4 - j * fw;
     if (xoff < 2) xoff = 2;
     gfx::draw_text(cx + xoff, y, lnbuf, COL_LINENUM, COL_LINENUM_BG);
   };
@@ -161,19 +159,18 @@ void notepad_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
       draw_line = line - s->scroll_y;
       i32 py = cy + draw_line * LINE_H;
 
-      // Line number at start of line
       if (col == 0)
         draw_linenum(line, py + 1);
 
       // Draw cursor
       if (i == s->cursor) {
-        i32 cursor_x = text_x + col * 8;
+        i32 cursor_x = text_x + col * fw;
         gfx::fill_rect(cursor_x, py, 2, LINE_H, COL_CURSOR);
       }
 
       // Draw character
-      if (!at_end && ch_c != '\n' && text_x + col * 8 + 8 <= cx + cw) {
-        gfx::draw_char(text_x + col * 8, py + 1, ch_c, COL_TEXT, COL_BG);
+      if (!at_end && ch_c != '\n' && text_x + col * fw + fw <= cx + cw) {
+        gfx::draw_char(text_x + col * fw, py + 1, ch_c, COL_TEXT, COL_BG);
       }
     }
 
@@ -265,8 +262,8 @@ void notepad_close(u8 *) {}
 const OgzApp notepad_app = {
     "Notepad",       // name
     "notepad.ogz",   // id
-    500,             // default_w
-    400,             // default_h
+    680,             // default_w
+    520,             // default_h
     notepad_open,    // on_open
     notepad_draw,    // on_draw
     notepad_key,     // on_key

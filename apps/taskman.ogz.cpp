@@ -42,9 +42,11 @@ constexpr u32 COL_BAR_FG = 0x007AA2F7;
 constexpr u32 COL_ACTIVE = 0x009ECE6A;
 constexpr u32 COL_DIM = 0x00565F89;
 
-constexpr i32 LINE_H = 11;
 constexpr i32 PAD = 6;
-constexpr i32 CHAR_W = 8;
+
+// Resolved at draw time via gfx::font_w()/font_h()
+i32 CHAR_W = 10;
+i32 LINE_H = 24;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -153,6 +155,9 @@ void taskman_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
   auto *s = reinterpret_cast<TaskManState *>(state);
 
   // Background
+  CHAR_W = gfx::font_w();
+  LINE_H = gfx::font_h() + 2;
+
   gfx::fill_rect(cx, cy, cw, ch, COL_BG);
 
   i32 x = cx + PAD;
@@ -190,7 +195,7 @@ void taskman_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
   y = draw_kv(x + 4, y, max_y, "Timer:     ", buf, COL_DIM);
 
   // RAM (fixed for QEMU virt)
-  y = draw_kv(x + 4, y, max_y, "RAM:       ", "256 MB");
+  y = draw_kv(x + 4, y, max_y, "RAM:       ", "512 MB");
 
   // ── Display ───────────────────────────────────────────────────────────
   y = draw_section(x, y, w, max_y, " DISPLAY");
@@ -311,10 +316,14 @@ void taskman_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
   // Table header
   if (y + LINE_H <= max_y) {
     gfx::fill_rect(x + 4, y, w - 8, LINE_H, COL_HEADER_BG);
-    gfx::draw_text(x + 8, y + 1, "PID", COL_DIM, COL_HEADER_BG);
-    gfx::draw_text(x + 40, y + 1, "NAME", COL_DIM, COL_HEADER_BG);
-    gfx::draw_text(x + 200, y + 1, "TYPE", COL_DIM, COL_HEADER_BG);
-    gfx::draw_text(x + 280, y + 1, "STATUS", COL_DIM, COL_HEADER_BG);
+    i32 col_pid = x + 8;
+    i32 col_name = x + CHAR_W * 5;
+    i32 col_type = x + CHAR_W * 22;
+    i32 col_status = x + CHAR_W * 36;
+    gfx::draw_text(col_pid, y + 1, "PID", COL_DIM, COL_HEADER_BG);
+    gfx::draw_text(col_name, y + 1, "NAME", COL_DIM, COL_HEADER_BG);
+    gfx::draw_text(col_type, y + 1, "TYPE", COL_DIM, COL_HEADER_BG);
+    gfx::draw_text(col_status, y + 1, "STATUS", COL_DIM, COL_HEADER_BG);
     y += LINE_H;
   }
 
@@ -330,15 +339,20 @@ void taskman_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
     u32 row_bg = (i % 2 == 0) ? COL_BG : 0x001F2030;
     gfx::fill_rect(x + 4, y, w - 8, LINE_H, row_bg);
 
+    i32 col_pid = x + 8;
+    i32 col_name = x + CHAR_W * 5;
+    i32 col_type = x + CHAR_W * 22;
+    i32 col_status = x + CHAR_W * 36;
+
     // PID column
     char pid[4];
     int_to_str(static_cast<u64>(i), pid);
-    gfx::draw_text(x + 8, y + 1, pid, COL_VALUE, row_bg);
+    gfx::draw_text(col_pid, y + 1, pid, COL_VALUE, row_bg);
 
     // Name column
     char name[20];
     str::ncpy(name, title, 19);
-    gfx::draw_text(x + 40, y + 1, name, COL_VALUE, row_bg);
+    gfx::draw_text(col_name, y + 1, name, COL_VALUE, row_bg);
 
     // Type column
     const char *type_str = "system";
@@ -353,12 +367,12 @@ void taskman_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
       type_str = "viewer";
       type_col = COL_LABEL;
     }
-    gfx::draw_text(x + 200, y + 1, type_str, type_col, row_bg);
+    gfx::draw_text(col_type, y + 1, type_str, type_col, row_bg);
 
     // Status column
     const char *status = active ? "active" : "idle";
     u32 status_col = active ? COL_ACTIVE : COL_DIM;
-    gfx::draw_text(x + 280, y + 1, status, status_col, row_bg);
+    gfx::draw_text(col_status, y + 1, status, status_col, row_bg);
 
     y += LINE_H;
   }
@@ -380,8 +394,8 @@ void taskman_close(u8 *) {
 const OgzApp taskman_app = {
     "Task Manager",    // name
     "taskman.ogz",     // id
-    420,               // default_w
-    480,               // default_h
+    560,               // default_w
+    640,               // default_h
     taskman_open,      // on_open
     taskman_draw,      // on_draw
     taskman_key,       // on_key

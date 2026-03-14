@@ -244,30 +244,25 @@ void terminal_open(u8 *state) {
 void terminal_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
   auto *s = reinterpret_cast<TermState *>(state);
 
-  constexpr i32 LINE_H = 10;
+  i32 fw = gfx::font_w();
+  i32 fh = gfx::font_h();
+  i32 line_h = fh + 2;
   constexpr i32 PAD = 4;
 
   // Dark background
   gfx::fill_rect(cx, cy, cw, ch, COL_BG);
 
-  // Build display: output + current command line
-  // Count total lines in output
-  i32 visible_lines = (ch - PAD * 2) / LINE_H;
+  i32 visible_lines = (ch - PAD * 2) / line_h;
 
-  // Draw output text + command line
   i32 draw_x = cx + PAD;
   i32 draw_y = cy + PAD;
   i32 max_x = cx + cw - PAD;
 
-  // We need to render from the bottom up to handle scrollback.
-  // Simple approach: render all lines, just offset.
   // Count total lines
   i32 total_lines = 1;
   for (i32 i = 0; i < s->out_len; i++)
     if (s->output[i] == '\n')
       total_lines++;
-  // Add lines for current command
-  // rough: the prompt is already in output, cmd is what user types after it
 
   i32 start_line = 0;
   if (total_lines > visible_lines)
@@ -279,33 +274,33 @@ void terminal_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
 
   // Draw output
   for (i32 i = 0; i < s->out_len; i++) {
-    if (cur_line >= start_line && ty + LINE_H <= cy + ch - PAD) {
+    if (cur_line >= start_line && ty + fh <= cy + ch - PAD) {
       if (s->output[i] == '\n') {
         // newline
-      } else if (tx + 8 <= max_x) {
+      } else if (tx + fw <= max_x) {
         gfx::draw_char(tx, ty, s->output[i], COL_TEXT, COL_BG);
-        tx += 8;
+        tx += fw;
       }
     }
     if (s->output[i] == '\n') {
       cur_line++;
       if (cur_line >= start_line)
-        ty += LINE_H;
+        ty += line_h;
       tx = draw_x;
     }
   }
 
-  // Draw current command text (after the prompt that's already in output)
+  // Draw current command text
   for (i32 i = 0; i < s->cmd_len; i++) {
-    if (ty + LINE_H <= cy + ch - PAD && tx + 8 <= max_x) {
+    if (ty + fh <= cy + ch - PAD && tx + fw <= max_x) {
       gfx::draw_char(tx, ty, s->cmd[i], COL_TEXT, COL_BG);
-      tx += 8;
+      tx += fw;
     }
   }
 
   // Draw cursor
-  if (ty + LINE_H <= cy + ch - PAD) {
-    gfx::fill_rect(tx, ty, 8, LINE_H, COL_CURSOR);
+  if (ty + fh <= cy + ch - PAD) {
+    gfx::fill_rect(tx, ty, fw, fh, COL_CURSOR);
   }
 }
 
@@ -355,8 +350,8 @@ void terminal_close(u8 *) {}
 const OgzApp terminal_app = {
     "Terminal",        // name
     "terminal.ogz",   // id
-    520,               // default_w
-    380,               // default_h
+    720,               // default_w
+    500,               // default_h
     terminal_open,     // on_open
     terminal_draw,     // on_draw
     terminal_key,      // on_key

@@ -95,6 +95,13 @@ extern "C" void kernel_main() {
   netdev::init();
   if (netdev::is_available()) {
     net::init();
+    // Sync system clock from NTP
+    if (net::is_available()) {
+      if (net::ntp_sync())
+        syslog::info("kernel", "NTP time synced");
+      else
+        syslog::warn("kernel", "NTP sync failed, using uptime clock");
+    }
   }
 
   // Try loading filesystem from disk, fall back to default init

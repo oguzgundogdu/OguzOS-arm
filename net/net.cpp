@@ -184,6 +184,10 @@ constexpr u16 DNS_RCODE_MASK = 0x000F;
 constexpr u16 DNS_TYPE_A = 1;
 constexpr u16 DNS_CLASS_IN = 1;
 
+// NTP constants (forward-declared here so handle_udp can see them)
+constexpr u16 NTP_CLIENT_PORT = 44123;
+void handle_ntp(const u8 *data, u32 len); // defined later
+
 // ─── DHCP structures ───
 
 struct DhcpMessage {
@@ -858,11 +862,10 @@ void handle_udp(u32 src_ip, const u8 *pkt, u32 len) {
   if (dst_port == 68) {
     handle_dhcp(data, payload_len);
   } else if (dst_port == DNS_CLIENT_PORT) {
-    // Some virtual NAT/DNS implementations reply from an address different
-    // from the configured DNS server. Query-ID validation in handle_dns()
-    // protects us from accepting unrelated packets.
     (void)src_ip;
     handle_dns(data, payload_len);
+  } else if (dst_port == NTP_CLIENT_PORT) {
+    handle_ntp(data, payload_len);
   }
 }
 
@@ -1509,6 +1512,72 @@ void do_curl(const char *url) {
   tcp_close();
 }
 
+// ─── SNTP (Simple Network Time Protocol) ───
+
+// NTP epoch starts 1900-01-01, Unix epoch 1970-01-01
+constexpr u64 NTP_UNIX_OFFSET = 2208988800ULL;
+constexpr u16 NTP_PORT = 123;
+
+// Wall clock state
+volatile bool ntp_received = false;
+u64 ntp_epoch_secs = 0;     // UTC seconds since 1970 at sync time
+u64 ntp_sync_ticks = 0;     // timer ticks at sync time
+
+struct NtpPacket {
+  u8  flags;        // LI(2) | VN(3) | Mode(3)
+  u8  stratum;
+  u8  poll;
+  u8  precision;
+  u32 root_delay;
+  u32 root_dispersion;
+  u32 ref_id;
+  u32 ref_ts_sec;
+  u32 ref_ts_frac;
+  u32 orig_ts_sec;
+  u32 orig_ts_frac;
+  u32 rx_ts_sec;
+  u32 rx_ts_frac;
+  u32 tx_ts_sec;
+  u32 tx_ts_frac;
+} __attribute__((packed));
+
+void handle_ntp(const u8 *data, u32 len) {
+  if (len < 48)
+    return;
+  const NtpPacket *ntp = reinterpret_cast<const NtpPacket *>(data);
+  u8 mode = ntp->flags & 0x07;
+  if (mode != 4)
+    return;
+
+  u32 tx_sec = read_be32(data + 40);
+  if (tx_sec < NTP_UNIX_OFFSET)
+    return;
+
+  ntp_epoch_secs = static_cast<u64>(tx_sec) - NTP_UNIX_OFFSET;
+  ntp_sync_ticks = get_ticks();
+  ntp_received = true;
+}
+
+void send_ntp_request(u32 server_ip) {
+  u8 mac[6];
+  if (!resolve_dst_mac(server_ip, mac))
+    return;
+
+  u8 ntp_pkt[48];
+  str::memset(ntp_pkt, 0, 48);
+  ntp_pkt[0] = 0x23; // LI=0, VN=4, Mode=3 (client)
+
+  u8 udp_pkt[sizeof(UdpHdr) + 48];
+  UdpHdr *udp = reinterpret_cast<UdpHdr *>(udp_pkt);
+  udp->src_port = htons(NTP_CLIENT_PORT);
+  udp->dst_port = htons(NTP_PORT);
+  udp->length = htons(static_cast<u16>(sizeof(UdpHdr) + 48));
+  udp->checksum = 0;
+  str::memcpy(udp_pkt + sizeof(UdpHdr), ntp_pkt, 48);
+
+  ipv4_send(server_ip, PROTO_UDP, udp_pkt, sizeof(udp_pkt), mac);
+}
+
 } // anonymous namespace
 
 // ─── Public interface ───
@@ -1762,5 +1831,39 @@ void dhcp() {
 }
 
 void curl(const char *url) { do_curl(url); }
+
+bool ntp_sync() {
+  if (!configured)
+    return false;
+
+  // Public NTP server IPs (QEMU user-mode networking forwards UDP to internet)
+  // time.google.com: 216.239.35.0  |  time.cloudflare.com: 162.159.200.1
+  constexpr u32 ntp_servers[] = {
+      0xD8EF2300, // 216.239.35.0 (time.google.com)
+      0xA29FC801, // 162.159.200.1 (time.cloudflare.com)
+  };
+
+  for (u32 server : ntp_servers) {
+    ntp_received = false;
+    send_ntp_request(server);
+
+    u64 start = get_ticks();
+    while (!elapsed_ms(start, 1500)) {
+      poll_one_packet();
+      if (ntp_received)
+        return true;
+      asm volatile("yield");
+    }
+  }
+  return false;
+}
+
+u64 get_epoch() {
+  if (!ntp_received)
+    return 0;
+  // Add elapsed time since sync
+  u64 elapsed = (get_ticks() - ntp_sync_ticks) / get_freq();
+  return ntp_epoch_secs + elapsed;
+}
 
 } // namespace net

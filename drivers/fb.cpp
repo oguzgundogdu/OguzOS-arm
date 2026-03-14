@@ -12,8 +12,8 @@ constexpr u64 FWCFG_DMA = FWCFG_BASE + 0x010;
 
 // Framebuffer lives at a fixed address in guest RAM
 constexpr u64 FB_ADDR = 0x46000000;
-constexpr u32 FB_WIDTH = 1024;
-constexpr u32 FB_HEIGHT = 768;
+constexpr u32 FB_WIDTH = 1920;
+constexpr u32 FB_HEIGHT = 1080;
 constexpr u32 FB_BPP = 4;
 constexpr u32 FB_STRIDE = FB_WIDTH * FB_BPP;
 
@@ -165,7 +165,7 @@ bool init() {
   }
 
   initialized = true;
-  uart::puts("  [fb]   ramfb: 1024x768x32\n");
+  uart::puts("  [fb]   ramfb: 1920x1080x32\n");
   return true;
 }
 

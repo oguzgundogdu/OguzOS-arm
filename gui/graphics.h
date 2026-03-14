@@ -25,4 +25,8 @@ void draw_text(i32 x, i32 y, const char *text, u32 fg, u32 bg);
 void draw_text_nobg(i32 x, i32 y, const char *text, u32 fg);
 i32 text_width(const char *text);
 
+// Font metrics (from embedded bitmap font)
+i32 font_w();
+i32 font_h();
+
 } // namespace gfx

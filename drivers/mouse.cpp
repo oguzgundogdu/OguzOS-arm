@@ -91,6 +91,13 @@ u16 eq_last_used_idx = 0;
 constexpr u32 NUM_EVT_BUFS = 8;
 VirtioInputEvent evt_bufs[NUM_EVT_BUFS];
 
+// Virtio-input config selectors
+constexpr u8 VIRTIO_INPUT_CFG_ABS_INFO = 0x12;
+
+// Axis range (read from device config)
+u32 abs_x_max = 32767;
+u32 abs_y_max = 32767;
+
 u64 base_addr = 0;
 bool initialized = false;
 
@@ -120,6 +127,28 @@ void post_event_buffers() {
   mmio(REG_QUEUE_NOTIFY) = 0;
 }
 
+// Read the maximum value for an absolute axis from virtio-input config.
+// The config returns a linux input_absinfo struct:
+//   u32 value, min, max, fuzz, flat, resolution
+u32 read_abs_max(u64 addr, u8 axis) {
+  volatile u8 *cfg = reinterpret_cast<volatile u8 *>(addr + REG_CONFIG);
+  cfg[0] = VIRTIO_INPUT_CFG_ABS_INFO; // select = abs info
+  cfg[1] = axis;                       // subsel = axis code
+  asm volatile("dmb ish" ::: "memory");
+  u8 size = cfg[2];
+  if (size < 12)
+    return 32767; // fallback if config not available
+
+  // Read max (u32 LE at offset 8 in the union data, which starts at cfg[8])
+  // input_absinfo: value(4) + min(4) + max(4)
+  // cfg[8..] = data area
+  u32 max_val = static_cast<u32>(cfg[8 + 8]) |
+                (static_cast<u32>(cfg[8 + 9]) << 8) |
+                (static_cast<u32>(cfg[8 + 10]) << 16) |
+                (static_cast<u32>(cfg[8 + 11]) << 24);
+  return max_val > 0 ? max_val : 32767;
+}
+
 // Check if a virtio-input device is a tablet (has EV_ABS capability)
 bool is_tablet_device(u64 addr) {
   volatile u8 *cfg = reinterpret_cast<volatile u8 *>(addr + REG_CONFIG);
@@ -145,6 +174,10 @@ bool init_device(u64 addr) {
   // Only claim tablet/mouse devices (not keyboards)
   if (!is_tablet_device(addr))
     return false;
+
+  // Read axis ranges from device config
+  abs_x_max = read_abs_max(addr, ABS_X);
+  abs_y_max = read_abs_max(addr, ABS_Y);
 
   // Clear queue memory and set up pointers
   str::memset(eq_mem, 0, sizeof(eq_mem));
@@ -274,20 +307,20 @@ bool poll(i32 &out_x, i32 &out_y, bool &out_left, bool &out_right) {
     VirtioInputEvent &evt = evt_bufs[desc_idx];
 
     if (evt.type == EV_ABS) {
-      i32 sw = static_cast<i32>(fb::width());
-      i32 sh = static_cast<i32>(fb::height());
+      u32 sw = fb::width();
+      u32 sh = fb::height();
       if (evt.code == ABS_X) {
-        cur_x = static_cast<i32>(evt.value * sw / 32768);
+        cur_x = static_cast<i32>(static_cast<u64>(evt.value) * sw / abs_x_max);
         if (cur_x < 0)
           cur_x = 0;
-        if (cur_x >= sw)
-          cur_x = sw - 1;
+        if (cur_x >= static_cast<i32>(sw))
+          cur_x = static_cast<i32>(sw) - 1;
       } else if (evt.code == ABS_Y) {
-        cur_y = static_cast<i32>(evt.value * sh / 32768);
+        cur_y = static_cast<i32>(static_cast<u64>(evt.value) * sh / abs_y_max);
         if (cur_y < 0)
           cur_y = 0;
-        if (cur_y >= sh)
-          cur_y = sh - 1;
+        if (cur_y >= static_cast<i32>(sh))
+          cur_y = static_cast<i32>(sh) - 1;
       }
     } else if (evt.type == EV_KEY) {
       if (evt.code == BTN_LEFT)

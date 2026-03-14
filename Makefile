@@ -168,7 +168,7 @@ run: $(KERNEL_BIN) $(DISK_IMG)
 	qemu-system-aarch64 \
 		-machine virt \
 		-cpu cortex-a72 \
-		-m 256M \
+		-m 512M \
 		-nographic \
 		-kernel $(KERNEL_BIN) \
 		-drive file=$(DISK_IMG),if=none,id=hd0,format=raw \
@@ -181,7 +181,7 @@ gui: $(KERNEL_BIN) $(DISK_IMG)
 	qemu-system-aarch64 \
 		-machine virt \
 		-cpu cortex-a72 \
-		-m 256M \
+		-m 512M \
 		-serial stdio \
 		-kernel $(KERNEL_BIN) \
 		-drive file=$(DISK_IMG),if=none,id=hd0,format=raw \
@@ -197,7 +197,7 @@ debug: $(KERNEL_BIN)
 	qemu-system-aarch64 \
 		-machine virt \
 		-cpu cortex-a72 \
-		-m 256M \
+		-m 512M \
 		-nographic \
 		-kernel $(KERNEL_BIN) \
 		-drive file=$(DISK_IMG),if=none,id=hd0,format=raw \

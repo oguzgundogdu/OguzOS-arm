@@ -6,6 +6,7 @@
 #include "graphics.h"
 #include "keyboard.h"
 #include "mouse.h"
+#include "net.h"
 #include "registry.h"
 #include "string.h"
 #include "syslog.h"
@@ -31,8 +32,8 @@ constexpr u32 COL_FILE_ICON = 0x00AACCEE;
 constexpr u32 COL_SELECTION = 0x003399FF;
 constexpr u32 COL_SCROLLBAR = 0x00CCCCCC;
 
-constexpr i32 TASKBAR_H = 28;
-constexpr i32 TITLEBAR_H = 20;
+constexpr i32 TASKBAR_H = 30;
+constexpr i32 TITLEBAR_H = 24;
 
 // ── Window types ────────────────────────────────────────────────────────────
 enum WinType { WIN_EXPLORER, WIN_TEXTVIEW, WIN_APP };
@@ -94,9 +95,9 @@ i32 mouse_down_x = -1, mouse_down_y = -1;
 bool start_menu_open = false;
 i32 start_menu_hover = -1;
 
-constexpr i32 MENU_W = 180;
-constexpr i32 MENU_ITEM_H = 24;
-constexpr i32 MENU_HEADER_H = 28;
+constexpr i32 MENU_W = 200;
+constexpr i32 MENU_ITEM_H = 26;
+constexpr i32 MENU_HEADER_H = 30;
 
 // Menu: built dynamically from apps registry + fixed items
 // Layout: [apps...] [---] [File Explorer] [About] [---] [Shutdown]
@@ -235,13 +236,13 @@ i32 create_window(const char *title, i32 x, i32 y, i32 w, i32 h, WinType t) {
 }
 
 void open_explorer(const char *path) {
-  i32 idx = create_window("File Explorer", 60, 40, 400, 320, WIN_EXPLORER);
+  i32 idx = create_window("File Explorer", 60, 40, 560, 440, WIN_EXPLORER);
   if (idx >= 0)
     str::ncpy(windows[idx].path, path, 255);
 }
 
 void open_text_viewer(const char *title, const char *text) {
-  i32 idx = create_window(title, 100, 60, 380, 280, WIN_TEXTVIEW);
+  i32 idx = create_window(title, 100, 60, 520, 400, WIN_TEXTVIEW);
   if (idx >= 0)
     str::ncpy(windows[idx].view_text, text, 4095);
 }
@@ -430,40 +431,54 @@ void draw_taskbar() {
   gfx::hline(0, sh - TASKBAR_H, sw, 0x00444444);
 
   // "OguzOS" button
-  gfx::fill_rect(2, sh - TASKBAR_H + 3, 60, TASKBAR_H - 6, 0x00445577);
-  gfx::draw_text(10, sh - TASKBAR_H + 9, "OguzOS", COL_TASK_TEXT, 0x00445577);
+  i32 fw = gfx::font_w();
+  i32 fh = gfx::font_h();
+  i32 oguz_btn_w = fw * 6 + 16;
+  i32 btn_pad = (TASKBAR_H - fh) / 2;
+  gfx::fill_rect(2, sh - TASKBAR_H + 3, oguz_btn_w, TASKBAR_H - 6, 0x00445577);
+  gfx::draw_text(10, sh - TASKBAR_H + btn_pad, "OguzOS", COL_TASK_TEXT, 0x00445577);
 
   // Window list on taskbar
-  i32 tx = 68;
+  i32 tab_w = fw * 10 + 12;
+  i32 tx = oguz_btn_w + 8;
   for (i32 i = 0; i < window_count; i++) {
     u32 bg;
     u32 fg = COL_TASK_TEXT;
     if (i == active_window && !windows[i].minimized)
       bg = 0x00556688;
     else if (windows[i].minimized)
-      bg = 0x00383838; // dimmer for minimized
+      bg = 0x00383838;
     else
       bg = 0x00444444;
     if (windows[i].minimized)
       fg = 0x00999999;
-    gfx::fill_rect(tx, sh - TASKBAR_H + 3, 80, TASKBAR_H - 6, bg);
-    // Truncate title to ~9 chars
+    gfx::fill_rect(tx, sh - TASKBAR_H + 3, tab_w, TASKBAR_H - 6, bg);
     char short_title[12];
     str::ncpy(short_title, windows[i].title, 10);
     short_title[10] = '\0';
-    gfx::draw_text(tx + 4, sh - TASKBAR_H + 9, short_title, fg, bg);
-    tx += 84;
+    gfx::draw_text(tx + 4, sh - TASKBAR_H + btn_pad, short_title, fg, bg);
+    tx += tab_w + 4;
   }
 
-  // Clock (uptime-based HH:MM)
-  u64 cnt, freq;
-  asm volatile("mrs %0, cntpct_el0" : "=r"(cnt));
-  asm volatile("mrs %0, cntfrq_el0" : "=r"(freq));
-  if (freq == 0)
-    freq = 1;
-  u64 sec = cnt / freq;
-  u64 min = (sec / 60) % 60;
-  u64 hr = (sec / 3600) % 24;
+  // Clock — real time from NTP, fallback to uptime
+  u64 epoch = net::get_epoch();
+  u64 hr, min;
+  if (epoch > 0) {
+    // UTC wall clock
+    u64 day_secs = epoch % 86400;
+    hr = day_secs / 3600;
+    min = (day_secs / 60) % 60;
+  } else {
+    // Fallback: uptime
+    u64 cnt2, freq2;
+    asm volatile("mrs %0, cntpct_el0" : "=r"(cnt2));
+    asm volatile("mrs %0, cntfrq_el0" : "=r"(freq2));
+    if (freq2 == 0)
+      freq2 = 1;
+    u64 sec = cnt2 / freq2;
+    hr = (sec / 3600) % 24;
+    min = (sec / 60) % 60;
+  }
 
   char ts[6];
   ts[0] = '0' + static_cast<char>(hr / 10);
@@ -472,12 +487,13 @@ void draw_taskbar() {
   ts[3] = '0' + static_cast<char>(min / 10);
   ts[4] = '0' + static_cast<char>(min % 10);
   ts[5] = '\0';
-  gfx::draw_text(sw - 48, sh - TASKBAR_H + 9, ts, COL_TASK_TEXT, COL_TASKBAR);
+  gfx::draw_text(sw - fw * 5 - 8, sh - TASKBAR_H + btn_pad, ts, COL_TASK_TEXT,
+                  COL_TASKBAR);
 }
 
 constexpr u32 COL_BTN_BG = 0x00555555;
 constexpr u32 COL_BTN_HOVER = 0x00777777;
-constexpr i32 BTN_SIZE = 14;
+constexpr i32 BTN_SIZE = 18;
 constexpr i32 BTN_PAD = 2;
 
 void draw_window_frame(Window &win) {
@@ -491,32 +507,44 @@ void draw_window_frame(Window &win) {
 
   // Title bar
   gfx::fill_rect(win.x, win.y, win.w, TITLEBAR_H, title_col);
-  gfx::draw_text(win.x + 6, win.y + 6, win.title, COL_TEXT_LIGHT, title_col);
+  i32 title_text_y = win.y + (TITLEBAR_H - gfx::font_h()) / 2;
+  gfx::draw_text(win.x + 8, title_text_y, win.title, COL_TEXT_LIGHT, title_col);
 
-  i32 by = win.y + 3;
+  i32 by = win.y + (TITLEBAR_H - BTN_SIZE) / 2;
+
+  // Icon metrics (centered in BTN_SIZE)
+  i32 ico = BTN_SIZE - 8; // icon inset
+  i32 ico2 = ico / 2;
 
   // Close button (rightmost)
   i32 close_x = win.x + win.w - BTN_SIZE - BTN_PAD;
   gfx::fill_rect(close_x, by, BTN_SIZE, BTN_SIZE, COL_CLOSE_BTN);
-  gfx::draw_char(close_x + 3, by + 3, 'X', COL_TEXT_LIGHT, COL_CLOSE_BTN);
+  // Draw X with two diagonal lines
+  for (i32 k = 0; k < BTN_SIZE - ico; k++) {
+    gfx::pixel(close_x + ico2 + k, by + ico2 + k, COL_TEXT_LIGHT);
+    gfx::pixel(close_x + ico2 + k, by + BTN_SIZE - ico2 - 1 - k, COL_TEXT_LIGHT);
+    // Thicken
+    if (k > 0) {
+      gfx::pixel(close_x + ico2 + k - 1, by + ico2 + k, COL_TEXT_LIGHT);
+      gfx::pixel(close_x + ico2 + k, by + BTN_SIZE - ico2 - k, COL_TEXT_LIGHT);
+    }
+  }
 
   // Maximize button
   i32 max_x = close_x - BTN_SIZE - BTN_PAD;
   gfx::fill_rect(max_x, by, BTN_SIZE, BTN_SIZE, COL_BTN_BG);
   if (win.maximized) {
-    // Restore icon: two overlapping squares
-    gfx::rect(max_x + 4, by + 2, 7, 7, COL_TEXT_LIGHT);
-    gfx::rect(max_x + 2, by + 4, 7, 7, COL_TEXT_LIGHT);
+    gfx::rect(max_x + ico2 + 2, by + ico2, BTN_SIZE - ico - 2, BTN_SIZE - ico - 2, COL_TEXT_LIGHT);
+    gfx::rect(max_x + ico2, by + ico2 + 2, BTN_SIZE - ico - 2, BTN_SIZE - ico - 2, COL_TEXT_LIGHT);
   } else {
-    // Maximize icon: single square
-    gfx::rect(max_x + 3, by + 3, 8, 8, COL_TEXT_LIGHT);
+    gfx::rect(max_x + ico2, by + ico2, BTN_SIZE - ico, BTN_SIZE - ico, COL_TEXT_LIGHT);
   }
 
   // Minimize button
   i32 min_x = max_x - BTN_SIZE - BTN_PAD;
   gfx::fill_rect(min_x, by, BTN_SIZE, BTN_SIZE, COL_BTN_BG);
-  // Underscore icon
-  gfx::hline(min_x + 3, by + 10, 8, COL_TEXT_LIGHT);
+  gfx::hline(min_x + ico2, by + BTN_SIZE - ico2 - 2, BTN_SIZE - ico, COL_TEXT_LIGHT);
+  gfx::hline(min_x + ico2, by + BTN_SIZE - ico2 - 1, BTN_SIZE - ico, COL_TEXT_LIGHT);
 
   // Window body
   gfx::fill_rect(win.x, win.y + TITLEBAR_H, win.w, win.h - TITLEBAR_H,
@@ -537,17 +565,22 @@ void draw_window_frame(Window &win) {
 void draw_explorer(Window &win) {
   draw_window_frame(win);
 
-  i32 cx = win.x + 4;
-  i32 cy = win.y + TITLEBAR_H + 4;
-  i32 cw = win.w - 8;
-  i32 ch = win.h - TITLEBAR_H - 8;
+  i32 fw = gfx::font_w();
+  i32 fh = gfx::font_h();
+  i32 pad = 6;
+
+  i32 cx = win.x + pad;
+  i32 cy = win.y + TITLEBAR_H + pad;
+  i32 cw = win.w - pad * 2;
+  i32 ch = win.h - TITLEBAR_H - pad * 2;
 
   // Path bar
-  gfx::fill_rect(cx, cy, cw, 14, 0x00FFFFFF);
-  gfx::rect(cx, cy, cw, 14, 0x00999999);
+  i32 path_h = fh + 6;
+  gfx::fill_rect(cx, cy, cw, path_h, 0x00FFFFFF);
+  gfx::rect(cx, cy, cw, path_h, 0x00999999);
   gfx::draw_text(cx + 4, cy + 3, win.path, COL_TEXT_DARK, 0x00FFFFFF);
-  cy += 18;
-  ch -= 18;
+  cy += path_h + 4;
+  ch -= path_h + 4;
 
   // Directory listing
   i32 dir_idx = fs::resolve(win.path);
@@ -557,7 +590,12 @@ void draw_explorer(Window &win) {
   if (!dir || dir->type != fs::NodeType::Directory)
     return;
 
-  constexpr i32 ITEM_H = 16;
+  i32 ITEM_H = fh + 6;
+  i32 icon_sz = fh - 4;
+  if (icon_sz < 8) icon_sz = 8;
+  i32 icon_pad = (ITEM_H - icon_sz) / 2;
+  i32 text_pad = (ITEM_H - fh) / 2;
+  i32 text_x = cx + icon_sz + 12;
   i32 item_y = cy;
   i32 item_idx = 0;
   bool has_dotdot = (dir_idx != 0);
@@ -569,8 +607,8 @@ void draw_explorer(Window &win) {
     u32 fg = sel ? COL_TEXT_LIGHT : COL_TEXT_DARK;
     if (sel)
       gfx::fill_rect(cx, item_y, cw, ITEM_H, COL_SELECTION);
-    gfx::fill_rect(cx + 4, item_y + 3, 10, 10, COL_FOLDER);
-    gfx::draw_text(cx + 18, item_y + 4, "..", fg, bg);
+    gfx::fill_rect(cx + 4, item_y + icon_pad, icon_sz, icon_sz, COL_FOLDER);
+    gfx::draw_text(text_x, item_y + text_pad, "..", fg, bg);
     item_y += ITEM_H;
     item_idx++;
   }
@@ -597,17 +635,17 @@ void draw_explorer(Window &win) {
     // Icon
     u32 icon_col =
         (child->type == fs::NodeType::Directory) ? COL_FOLDER : COL_FILE_ICON;
-    gfx::fill_rect(cx + 4, item_y + 3, 10, 10, icon_col);
+    gfx::fill_rect(cx + 4, item_y + icon_pad, icon_sz, icon_sz, icon_col);
 
     // Name
-    gfx::draw_text(cx + 18, item_y + 4, child->name, fg, bg);
+    gfx::draw_text(text_x, item_y + text_pad, child->name, fg, bg);
 
     // Size for files
     if (child->type == fs::NodeType::File) {
       char sz[16];
       int_to_str(static_cast<i64>(child->content_len), sz);
       str::cat(sz, "B");
-      gfx::draw_text(cx + cw - 56, item_y + 4, sz, fg, bg);
+      gfx::draw_text(cx + cw - fw * 6, item_y + text_pad, sz, fg, bg);
     }
 
     item_y += ITEM_H;
@@ -627,14 +665,17 @@ void draw_text_viewer(Window &win) {
   i32 tx = cx;
   i32 ty = cy;
 
-  while (*p && ty + 8 <= max_y) {
+  i32 fw = gfx::font_w();
+  i32 fh = gfx::font_h();
+
+  while (*p && ty + fh <= max_y) {
     if (*p == '\n') {
-      ty += 10;
+      ty += fh + 2;
       tx = cx;
     } else {
-      if (tx + 8 <= cx + cw) {
+      if (tx + fw <= cx + cw) {
         gfx::draw_char(tx, ty, *p, COL_TEXT_DARK, COL_WIN_BODY);
-        tx += 8;
+        tx += fw;
       }
     }
     p++;
@@ -666,9 +707,12 @@ void draw_start_menu() {
   gfx::rect(mx, my, MENU_W, menu_h_computed, 0x00555555);
 
   // Header bar
+  i32 mfh = gfx::font_h();
+  i32 mfw = gfx::font_w();
+  i32 hdr_text_y = my + (MENU_HEADER_H - mfh) / 2;
   gfx::fill_rect(mx + 1, my + 1, MENU_W - 2, MENU_HEADER_H - 1, 0x00445577);
-  gfx::draw_text(mx + 12, my + 10, "OguzOS", COL_TEXT_LIGHT, 0x00445577);
-  gfx::draw_text(mx + 68, my + 10, "v1.0", 0x00AABBCC, 0x00445577);
+  gfx::draw_text(mx + 12, hdr_text_y, "OguzOS", COL_TEXT_LIGHT, 0x00445577);
+  gfx::draw_text(mx + 12 + mfw * 7, hdr_text_y, "v1.0", 0x00AABBCC, 0x00445577);
 
   // Menu items
   i32 iy = my + MENU_HEADER_H + 1;
@@ -685,7 +729,8 @@ void draw_start_menu() {
 
     u32 bg = hovered ? COL_MENU_HOVER : COL_MENU_BG;
     gfx::fill_rect(mx + 1, iy, MENU_W - 2, MENU_ITEM_H, bg);
-    gfx::draw_text(mx + 12, iy + 8, menu_labels[i], COL_TEXT_LIGHT, bg);
+    gfx::draw_text(mx + 12, iy + (MENU_ITEM_H - mfh) / 2, menu_labels[i],
+                   COL_TEXT_LIGHT, bg);
     iy += MENU_ITEM_H;
   }
 }
@@ -854,9 +899,13 @@ void handle_mouse_down(i32 x, i32 y) {
       Window &w = windows[window_count - 1];
 
       if (w.type == WIN_EXPLORER) {
-        i32 local_y = y - w.y - TITLEBAR_H - 22;
+        i32 exp_pad = 6;
+        i32 exp_path_h = gfx::font_h() + 6;
+        i32 exp_item_h = gfx::font_h() + 6;
+        i32 list_top = w.y + TITLEBAR_H + exp_pad + exp_path_h + 4;
+        i32 local_y = y - list_top;
         if (local_y >= 0) {
-          i32 clicked_item = local_y / 16;
+          i32 clicked_item = local_y / exp_item_h;
           i32 total = explorer_item_count(w);
           if (clicked_item >= 0 && clicked_item < total)
             w.selected = clicked_item;
@@ -898,27 +947,28 @@ void handle_mouse_up(i32 x, i32 y) {
 
   // Taskbar
   if (y >= sh - TASKBAR_H) {
-    if (x >= 2 && x <= 62) {
+    i32 fw2 = gfx::font_w();
+    i32 oguz_w = fw2 * 6 + 16;
+    i32 tab_w2 = fw2 * 10 + 12;
+    if (x >= 2 && x <= oguz_w + 2) {
       start_menu_open = !start_menu_open;
       start_menu_hover = -1;
     } else {
       start_menu_open = false;
-      i32 tx = 68;
+      i32 tx = oguz_w + 8;
       for (i32 i = 0; i < window_count; i++) {
-        if (x >= tx && x < tx + 80) {
+        if (x >= tx && x < tx + tab_w2) {
           if (windows[i].minimized) {
-            // Restore from minimized
             windows[i].minimized = false;
             bring_to_front(i);
           } else if (i == active_window) {
-            // Click active window on taskbar → minimize it
             minimize_window(i);
           } else {
             bring_to_front(i);
           }
           break;
         }
-        tx += 84;
+        tx += tab_w2 + 4;
       }
     }
     return;
@@ -987,8 +1037,11 @@ void handle_double_click(i32 x, i32 y) {
 
   // Double-click explorer content → activate item
   if (win.type == WIN_EXPLORER) {
+    i32 exp_pad = 6;
+    i32 exp_path_h = gfx::font_h() + 6;
+    i32 list_top = win.y + TITLEBAR_H + exp_pad + exp_path_h + 4;
     if (x >= win.x && x < win.x + win.w &&
-        y >= win.y + TITLEBAR_H + 22 && y < win.y + win.h) {
+        y >= list_top && y < win.y + win.h) {
       explorer_activate(win);
     }
   }
