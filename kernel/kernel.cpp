@@ -185,6 +185,7 @@ extern "C" void kernel_main() {
     menu::add(menu::ENTRY_EXPLORER, "File Explorer", "");
     menu::add(menu::ENTRY_ABOUT, "About OguzOS", "");
     menu::add(menu::ENTRY_SEP, "---", "");
+    menu::add(menu::ENTRY_RESTART, "Restart", "");
     menu::add(menu::ENTRY_SHUTDOWN, "Shutdown", "");
     menu::save();
     syslog::info("kernel", "created default /etc/menu");

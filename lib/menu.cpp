@@ -129,6 +129,9 @@ void save() {
     case ENTRY_COMMAND:
       tc = 'C';
       break;
+    case ENTRY_RESTART:
+      tc = 'R';
+      break;
     default:
       tc = 'A';
       break;
@@ -224,6 +227,9 @@ void load() {
       break;
     case 'C':
       type = ENTRY_COMMAND;
+      break;
+    case 'R':
+      type = ENTRY_RESTART;
       break;
     default:
       continue;

@@ -28,6 +28,7 @@ enum EntryType : i32 {
   ENTRY_ABOUT = 4,    // built-in: About
   ENTRY_SHUTDOWN = 5, // built-in: Shutdown
   ENTRY_COMMAND = 6,  // run a shell command in Terminal
+  ENTRY_RESTART = 7,  // built-in: Restart
 };
 
 struct Entry {

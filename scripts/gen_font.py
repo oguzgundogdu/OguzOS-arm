@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Generate an antialiased C font header from a TTF font.
-Each glyph stores 8-bit alpha values (not 1-bit bitmaps).
+Generate a crisp bitmap C font header with edge smoothing.
+Uses Terminus bitmap font as pixel-perfect base, then adds subtle
+anti-aliasing on edge pixels for smoother curves and diagonals.
 
 Usage: python3 scripts/gen_font.py [font_path] [pixel_size] > gui/font.h
 """
@@ -9,9 +10,10 @@ Usage: python3 scripts/gen_font.py [font_path] [pixel_size] > gui/font.h
 import sys
 from PIL import Image, ImageDraw, ImageFont
 
+
 def main():
     font_path = sys.argv[1] if len(sys.argv) > 1 else \
-        "/Users/oguzgundogdu/Library/Fonts/JetBrainsMonoNerdFontMono-Regular.ttf"
+        "/Users/oguzgundogdu/Library/Fonts/TerminusTTF-4.49.3.ttf"
     px_size = int(sys.argv[2]) if len(sys.argv) > 2 else 14
 
     font = ImageFont.truetype(font_path, px_size)
@@ -28,8 +30,9 @@ def main():
 
     print("#pragma once")
     print()
-    print("// Auto-generated antialiased font from JetBrains Mono Nerd Font")
-    print(f"// Size: {char_w}x{char_h} pixels per glyph, 8-bit alpha")
+    print("// Auto-generated bitmap font from Terminus with edge smoothing")
+    print(f"// Size: {char_w}x{char_h} pixels per glyph")
+    print(f"// Pixel-perfect stems + subtle AA fringe for smooth edges")
     print(f"// Covers ASCII 32 (space) through 126 (~)")
     print()
     print("#include \"types.h\"")
@@ -37,7 +40,7 @@ def main():
     print(f"constexpr i32 FONT_W = {char_w};")
     print(f"constexpr i32 FONT_H = {char_h};")
     print()
-    print(f"// Each glyph: {char_w * char_h} bytes ({char_w}x{char_h} alpha map)")
+    print(f"// Each glyph: {char_w * char_h} bytes ({char_w}x{char_h})")
     print(f"// Total: 95 glyphs x {char_w * char_h} = {95 * char_w * char_h} bytes")
     print(f"const u8 font_alpha[95][{char_w * char_h}] = {{")
 

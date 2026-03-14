@@ -12,10 +12,12 @@ inline u32 blend(u32 fg, u32 bg, u8 alpha) {
     return bg;
   if (alpha == 255)
     return fg;
-  u32 inv = 255 - alpha;
-  u32 r = ((fg >> 16 & 0xFF) * alpha + (bg >> 16 & 0xFF) * inv) / 255;
-  u32 g = ((fg >> 8 & 0xFF) * alpha + (bg >> 8 & 0xFF) * inv) / 255;
-  u32 b = ((fg & 0xFF) * alpha + (bg & 0xFF) * inv) / 255;
+  u32 a = alpha;
+  u32 inv = 255 - a;
+  // Use (x + 128) / 255 for proper rounding instead of truncation
+  u32 r = ((fg >> 16 & 0xFF) * a + (bg >> 16 & 0xFF) * inv + 128) / 255;
+  u32 g = ((fg >> 8 & 0xFF) * a + (bg >> 8 & 0xFF) * inv + 128) / 255;
+  u32 b = ((fg & 0xFF) * a + (bg & 0xFF) * inv + 128) / 255;
   return (r << 16) | (g << 8) | b;
 }
 

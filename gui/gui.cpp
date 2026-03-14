@@ -119,6 +119,7 @@ i32 menu_item_count = 0;
 i32 mi_explorer = -1;
 i32 mi_about = -1;
 i32 mi_shutdown = -1;
+i32 mi_restart = -1;
 
 i32 menu_h_computed = 0;
 
@@ -133,6 +134,7 @@ void build_menu() {
   mi_explorer = -1;
   mi_about = -1;
   mi_shutdown = -1;
+  mi_restart = -1;
 
   for (i32 i = 0; i < menu::count() && menu_item_count < MAX_MENU_ITEMS; i++) {
     const menu::Entry *e = menu::get(i);
@@ -184,6 +186,12 @@ void build_menu() {
       menu_labels[idx] = "Shutdown";
       menu_app_ids[idx] = nullptr;
       menu_entry_types[idx] = menu::ENTRY_SHUTDOWN;
+      break;
+    case menu::ENTRY_RESTART:
+      mi_restart = idx;
+      menu_labels[idx] = "Restart";
+      menu_app_ids[idx] = nullptr;
+      menu_entry_types[idx] = menu::ENTRY_RESTART;
       break;
     }
     menu_item_count++;
@@ -983,6 +991,16 @@ void handle_menu_click(i32 item) {
                      "Built with freestanding C++17\n"
                      "No standard library, no OS beneath.\n\n"
                      "Press Q to close this window.");
+  } else if (item == mi_restart) {
+    // Sync filesystem to disk before reboot
+    fs::sync_to_disk();
+    // PSCI SYSTEM_RESET (0x84000009)
+    u64 psci_reset = 0x84000009;
+    asm volatile("mov x0, %0\n"
+                 "hvc #0\n" ::"r"(psci_reset)
+                 : "x0");
+    for (;;)
+      asm volatile("wfe");
   } else if (item == mi_shutdown) {
     asm volatile("movz x0, #0x8400, lsl #16\n"
                  "movk x0, #0x0008\n"
