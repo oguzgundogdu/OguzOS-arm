@@ -105,6 +105,9 @@ extern "C" void kernel_main() {
     syslog::info("kernel", "filesystem initialized (default)");
   }
 
+  // Enable file logging now that fs is ready
+  syslog::init();
+
   // Register .ogz apps
   apps::register_notepad();
   apps::register_terminal();

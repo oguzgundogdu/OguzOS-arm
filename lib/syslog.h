@@ -15,6 +15,9 @@ enum class Level : u8 {
   ERROR = 3,
 };
 
+// Initialize file logging (call after fs::init)
+void init();
+
 // Set/get runtime log level filter
 void set_level(Level level);
 Level get_level();
