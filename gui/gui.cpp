@@ -1,5 +1,7 @@
 #include "gui.h"
 #include "app.h"
+#include "assoc.h"
+#include "menu.h"
 #include "exception.h"
 #include "fb.h"
 #include "fs.h"
@@ -120,48 +122,72 @@ i32 mi_shutdown = -1;
 
 i32 menu_h_computed = 0;
 
+// Menu entry types cached per slot for handle_menu_click
+i32 menu_entry_types[MAX_MENU_ITEMS];
+// Static label storage for entries whose names come from menu::Entry
+char menu_label_bufs[MAX_MENU_ITEMS][menu::MAX_LABEL];
+
 void build_menu() {
   menu_item_count = 0;
   str::memset(menu_app_ids, 0, sizeof(menu_app_ids));
+  mi_explorer = -1;
+  mi_about = -1;
+  mi_shutdown = -1;
 
-  // Add registered .ogz apps
-  i32 nap = apps::count();
-  for (i32 i = 0; i < nap && menu_item_count < MAX_MENU_ITEMS - 5; i++) {
-    const OgzApp *a = apps::get(i);
-    if (a) {
-      menu_labels[menu_item_count] = a->name;
-      menu_app_ids[menu_item_count] = a->id;
-      menu_item_count++;
+  for (i32 i = 0; i < menu::count() && menu_item_count < MAX_MENU_ITEMS; i++) {
+    const menu::Entry *e = menu::get(i);
+    if (!e)
+      continue;
+
+    i32 idx = menu_item_count;
+
+    switch (e->type) {
+    case menu::ENTRY_APP: {
+      const OgzApp *app = apps::find(e->id);
+      str::ncpy(menu_label_bufs[idx], e->label[0] ? e->label : (app ? app->name : e->id), menu::MAX_LABEL - 1);
+      menu_labels[idx] = menu_label_bufs[idx];
+      menu_app_ids[idx] = app ? app->id : nullptr;
+      menu_entry_types[idx] = menu::ENTRY_APP;
+      break;
     }
+    case menu::ENTRY_SHORTCUT:
+      str::ncpy(menu_label_bufs[idx], e->label, menu::MAX_LABEL - 1);
+      menu_labels[idx] = menu_label_bufs[idx];
+      menu_app_ids[idx] = nullptr;
+      menu_entry_types[idx] = menu::ENTRY_SHORTCUT;
+      break;
+    case menu::ENTRY_COMMAND:
+      str::ncpy(menu_label_bufs[idx], e->label, menu::MAX_LABEL - 1);
+      menu_labels[idx] = menu_label_bufs[idx];
+      menu_app_ids[idx] = nullptr;
+      menu_entry_types[idx] = menu::ENTRY_COMMAND;
+      break;
+    case menu::ENTRY_SEP:
+      menu_labels[idx] = "---";
+      menu_app_ids[idx] = nullptr;
+      menu_entry_types[idx] = menu::ENTRY_SEP;
+      break;
+    case menu::ENTRY_EXPLORER:
+      mi_explorer = idx;
+      menu_labels[idx] = "File Explorer";
+      menu_app_ids[idx] = nullptr;
+      menu_entry_types[idx] = menu::ENTRY_EXPLORER;
+      break;
+    case menu::ENTRY_ABOUT:
+      mi_about = idx;
+      menu_labels[idx] = "About OguzOS";
+      menu_app_ids[idx] = nullptr;
+      menu_entry_types[idx] = menu::ENTRY_ABOUT;
+      break;
+    case menu::ENTRY_SHUTDOWN:
+      mi_shutdown = idx;
+      menu_labels[idx] = "Shutdown";
+      menu_app_ids[idx] = nullptr;
+      menu_entry_types[idx] = menu::ENTRY_SHUTDOWN;
+      break;
+    }
+    menu_item_count++;
   }
-
-  // Separator
-  menu_labels[menu_item_count] = "---";
-  menu_app_ids[menu_item_count] = nullptr;
-  menu_item_count++;
-
-  // File Explorer
-  mi_explorer = menu_item_count;
-  menu_labels[menu_item_count] = "File Explorer";
-  menu_app_ids[menu_item_count] = nullptr;
-  menu_item_count++;
-
-  // About
-  mi_about = menu_item_count;
-  menu_labels[menu_item_count] = "About OguzOS";
-  menu_app_ids[menu_item_count] = nullptr;
-  menu_item_count++;
-
-  // Separator
-  menu_labels[menu_item_count] = "---";
-  menu_app_ids[menu_item_count] = nullptr;
-  menu_item_count++;
-
-  // Shutdown
-  mi_shutdown = menu_item_count;
-  menu_labels[menu_item_count] = "Shutdown";
-  menu_app_ids[menu_item_count] = nullptr;
-  menu_item_count++;
 
   menu_h_computed = MENU_HEADER_H + menu_item_count * MENU_ITEM_H + 2;
 }
@@ -402,14 +428,13 @@ void explorer_activate(Window &win) {
     win.selected = 0;
     win.scroll = 0;
   } else {
-    // Check if this is a .ogz app binary — launch it
-    usize nlen = str::len(child->name);
-    if (nlen > 4 && str::cmp(child->name + nlen - 4, ".ogz") == 0 &&
-        apps::find(child->name)) {
-      gui::open_app(child->name);
-    } else {
-      open_text_viewer(child->name, child->content);
-    }
+    // Build absolute path for the file
+    char fpath[256];
+    str::ncpy(fpath, win.path, 255);
+    if (str::len(fpath) > 1)
+      str::cat(fpath, "/");
+    str::cat(fpath, child->name);
+    gui::open_file(fpath, child->content);
   }
 }
 
@@ -893,13 +918,54 @@ void handle_menu_click(i32 item) {
   if (item < 0 || item >= menu_item_count)
     return;
 
-  // Check if it's an app launch
+  // App launch
   if (menu_app_ids[item]) {
     gui::open_app(menu_app_ids[item]);
     return;
   }
 
-  // Fixed menu items
+  // Command: open terminal and run the command
+  if (menu_entry_types[item] == menu::ENTRY_COMMAND) {
+    const menu::Entry *e = menu::get(item);
+    if (e && e->id[0]) {
+      const OgzApp *term = apps::find("terminal.ogz");
+      if (term && term->on_open_file) {
+        i32 idx = create_window(e->label, 80, 30, term->default_w,
+                                 term->default_h, WIN_APP);
+        if (idx >= 0) {
+          windows[idx].app = const_cast<OgzApp *>(term);
+          str::memset(windows[idx].app_state, 0, sizeof(windows[idx].app_state));
+          if (try_enter() == 0) {
+            term->on_open(windows[idx].app_state);
+            term->on_open_file(windows[idx].app_state, e->label, e->id);
+            try_leave();
+          } else {
+            close_window(idx);
+          }
+        }
+      }
+    }
+    return;
+  }
+
+  // Shortcut: open path in explorer or as file
+  if (menu_entry_types[item] == menu::ENTRY_SHORTCUT) {
+    const menu::Entry *e = menu::get(item);
+    if (e && e->id[0]) {
+      i32 idx = fs::resolve(e->id);
+      if (idx >= 0) {
+        const fs::Node *node = fs::get_node(idx);
+        if (node && node->type == fs::NodeType::Directory) {
+          open_explorer(e->id);
+        } else if (node) {
+          gui::open_file(e->id, node->content);
+        }
+      }
+    }
+    return;
+  }
+
+  // Built-in items
   if (item == mi_explorer) {
     open_explorer("/");
   } else if (item == mi_about) {
@@ -1227,6 +1293,49 @@ void open_app(const char *app_id) {
     syslog::error("gui", "app crashed during open: %s", app->name);
     close_window(idx);
   }
+}
+
+void open_file(const char *path, const char *content) {
+  // Extract filename from path
+  const char *name = path;
+  for (const char *p = path; *p; p++) {
+    if (*p == '/')
+      name = p + 1;
+  }
+
+  // Check for .ogz app binary
+  usize nlen = str::len(name);
+  if (nlen > 4 && str::cmp(name + nlen - 4, ".ogz") == 0 &&
+      apps::find(name)) {
+    open_app(name);
+    return;
+  }
+
+  // Check file association
+  const char *app_id = assoc::find_for_file(name);
+  if (app_id) {
+    const OgzApp *app = apps::find(app_id);
+    if (app && app->on_open_file) {
+      i32 idx = create_window(name, 80, 30, app->default_w, app->default_h,
+                               WIN_APP);
+      if (idx < 0)
+        return;
+      windows[idx].app = const_cast<OgzApp *>(app);
+      str::memset(windows[idx].app_state, 0, sizeof(windows[idx].app_state));
+      if (try_enter() == 0) {
+        app->on_open(windows[idx].app_state);
+        app->on_open_file(windows[idx].app_state, path, content);
+        try_leave();
+        syslog::info("gui", "opened '%s' with %s", name, app->name);
+      } else {
+        close_window(idx);
+      }
+      return;
+    }
+  }
+
+  // Fallback: text viewer
+  open_text_viewer(name, content);
 }
 
 void run() {

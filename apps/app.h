@@ -53,4 +53,9 @@ struct OgzApp {
   // Called when the mouse moves while held in the content area (drag).
   // May be nullptr.
   void (*on_mouse_move)(u8 *app_state, i32 rx, i32 ry, i32 cw, i32 ch);
+
+  // Called after on_open when the app is launched to open a specific file.
+  // path = absolute path, content = file content (null-terminated).
+  // May be nullptr if the app doesn't support opening files.
+  void (*on_open_file)(u8 *app_state, const char *path, const char *content);
 };

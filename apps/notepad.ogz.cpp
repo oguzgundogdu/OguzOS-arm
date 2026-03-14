@@ -259,6 +259,26 @@ void notepad_arrow(u8 *state, char dir) {
 
 void notepad_close(u8 *) {}
 
+void notepad_open_file(u8 *state, const char *path, const char *content) {
+  auto *s = reinterpret_cast<NotepadState *>(state);
+  // Extract filename from path
+  const char *name = path;
+  for (const char *p = path; *p; p++) {
+    if (*p == '/')
+      name = p + 1;
+  }
+  str::ncpy(s->filename, name, 63);
+  usize clen = str::len(content);
+  if (clen > 3999)
+    clen = 3999;
+  str::memcpy(s->text, content, clen);
+  s->text[clen] = '\0';
+  s->len = static_cast<i32>(clen);
+  s->cursor = 0;
+  s->scroll_y = 0;
+  s->dirty = false;
+}
+
 void notepad_scroll(u8 *state, i32 delta) {
   auto *s = reinterpret_cast<NotepadState *>(state);
   s->scroll_y -= delta * 3;
@@ -277,8 +297,9 @@ const OgzApp notepad_app = {
     notepad_close,   // on_close
     nullptr,         // on_click
     notepad_scroll,  // on_scroll
-    nullptr,         // on_mouse_down
-    nullptr,         // on_mouse_move
+    nullptr,            // on_mouse_down
+    nullptr,            // on_mouse_move
+    notepad_open_file,  // on_open_file
 };
 
 // Auto-register

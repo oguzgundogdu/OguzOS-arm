@@ -1,6 +1,8 @@
 #include "shell.h"
+#include "assoc.h"
 #include "disk.h"
 #include "env.h"
+#include "menu.h"
 #include "fb.h"
 #include "fs.h"
 #include "gui.h"
@@ -105,6 +107,14 @@ void cmd_help() {
   uart::puts("  \033[1menv\033[0m               Show environment variables\n");
   uart::puts("  \033[1mexport\033[0m KEY=VALUE  Set environment variable\n");
   uart::puts("  \033[1munset\033[0m KEY         Remove environment variable\n");
+  uart::puts("\n  \033[1;36m-- File Associations --\033[0m\n");
+  uart::puts("  \033[1massoc\033[0m .ext app    Associate extension with app\n");
+  uart::puts("  \033[1munassoc\033[0m .ext      Remove association\n");
+  uart::puts("  \033[1mlsassoc\033[0m           List all associations\n");
+  uart::puts("\n  \033[1;36m-- Start Menu --\033[0m\n");
+  uart::puts("  \033[1mpin\033[0m <app> [label] Pin app or path to menu\n");
+  uart::puts("  \033[1munpin\033[0m <app|label> Remove from menu\n");
+  uart::puts("  \033[1mlsmenu\033[0m            List menu entries\n");
   uart::puts("\n  \033[1;36m-- System --\033[0m\n");
   uart::puts("  \033[1mgui\033[0m               Launch graphical desktop\n");
   uart::puts("  \033[1mhalt\033[0m              Sync & halt the system\n");
@@ -379,6 +389,199 @@ void cmd_unset(usize argc, char *args[]) {
   }
 }
 
+void cmd_assoc(usize argc, char *args[]) {
+  if (argc < 3) {
+    uart::puts("usage: assoc <.ext> <app_id>\n");
+    uart::puts("  e.g.: assoc .txt notepad.ogz\n");
+    return;
+  }
+  assoc::set(args[1], args[2]);
+  assoc::save();
+  uart::puts(args[1]);
+  uart::puts(" -> ");
+  uart::puts(args[2]);
+  uart::putc('\n');
+}
+
+void cmd_unassoc(usize argc, char *args[]) {
+  if (argc < 2) {
+    uart::puts("usage: unassoc <.ext>\n");
+    return;
+  }
+  if (!assoc::unset(args[1])) {
+    uart::puts("unassoc: not found: ");
+    uart::puts(args[1]);
+    uart::putc('\n');
+  } else {
+    assoc::save();
+  }
+}
+
+void cmd_lsassoc() {
+  if (assoc::count() == 0) {
+    uart::puts("  (no file associations)\n");
+    return;
+  }
+  for (i32 i = 0; i < assoc::count(); i++) {
+    const char *ext = assoc::ext_at(i);
+    const char *app = assoc::app_at(i);
+    if (ext) {
+      uart::puts("  ");
+      uart::puts(ext);
+      uart::puts(" -> ");
+      uart::puts(app);
+      uart::putc('\n');
+    }
+  }
+}
+
+void cmd_pin(usize argc, char *args[]) {
+  if (argc < 2) {
+    uart::puts("usage: pin <app_id|path> [label]\n");
+    uart::puts("       pin --cmd \"command\" [label]\n");
+    uart::puts("  e.g.: pin notepad.ogz\n");
+    uart::puts("        pin /home \"My Files\"\n");
+    uart::puts("        pin --cmd \"ping 10.0.2.2\" \"Ping GW\"\n");
+    return;
+  }
+
+  // --cmd flag: pin a shell command
+  if (str::cmp(args[1], "--cmd") == 0) {
+    if (argc < 3) {
+      uart::puts("pin: --cmd requires a command\n");
+      return;
+    }
+    const char *cmd = args[2];
+    const char *label = (argc >= 4) ? args[3] : cmd;
+    menu::add(menu::ENTRY_COMMAND, label, cmd);
+    menu::save();
+    uart::puts("Pinned command: ");
+    uart::puts(label);
+    uart::putc('\n');
+    return;
+  }
+
+  const char *id = args[1];
+  const char *label = (argc >= 3) ? args[2] : "";
+
+  // Check if it's an app id
+  if (apps::find(id)) {
+    if (menu::has_app(id)) {
+      uart::puts("pin: already in menu: ");
+      uart::puts(id);
+      uart::putc('\n');
+      return;
+    }
+    // Insert before first separator
+    i32 pos = 0;
+    for (i32 i = 0; i < menu::count(); i++) {
+      const menu::Entry *e = menu::get(i);
+      if (e && e->type == menu::ENTRY_SEP) {
+        pos = i;
+        break;
+      }
+      pos = i + 1;
+    }
+    const OgzApp *app = apps::find(id);
+    menu::insert(pos, menu::ENTRY_APP, label[0] ? label : app->name, id);
+  } else {
+    // Treat as a shortcut path
+    menu::add(menu::ENTRY_SHORTCUT, label[0] ? label : id, id);
+  }
+  menu::save();
+  uart::puts("Pinned: ");
+  uart::puts(id);
+  uart::putc('\n');
+}
+
+void cmd_unpin(usize argc, char *args[]) {
+  if (argc < 2) {
+    uart::puts("usage: unpin <app_id|label>\n");
+    return;
+  }
+  i32 idx = menu::find(args[1]);
+  if (idx < 0) {
+    // Try matching by label
+    for (i32 i = 0; i < menu::count(); i++) {
+      const menu::Entry *e = menu::get(i);
+      if (e && str::cmp(e->label, args[1]) == 0) {
+        idx = i;
+        break;
+      }
+    }
+  }
+  if (idx < 0) {
+    uart::puts("unpin: not found: ");
+    uart::puts(args[1]);
+    uart::putc('\n');
+    return;
+  }
+  const menu::Entry *e = menu::get(idx);
+  // Don't allow removing built-in shutdown
+  if (e && e->type == menu::ENTRY_SHUTDOWN) {
+    uart::puts("unpin: cannot remove Shutdown\n");
+    return;
+  }
+  menu::remove(idx);
+  menu::save();
+  uart::puts("Unpinned: ");
+  uart::puts(args[1]);
+  uart::putc('\n');
+}
+
+void cmd_lsmenu() {
+  if (menu::count() == 0) {
+    uart::puts("  (empty menu)\n");
+    return;
+  }
+  for (i32 i = 0; i < menu::count(); i++) {
+    const menu::Entry *e = menu::get(i);
+    if (!e)
+      continue;
+    uart::puts("  ");
+    char idx_buf[8];
+    i32 v = i, j = 0;
+    char tmp[8];
+    if (v == 0) { tmp[j++] = '0'; }
+    else { while (v > 0) { tmp[j++] = '0' + (v % 10); v /= 10; } }
+    i32 k = 0;
+    while (j > 0) idx_buf[k++] = tmp[--j];
+    idx_buf[k] = '\0';
+    uart::puts(idx_buf);
+    uart::puts(". ");
+    switch (e->type) {
+    case menu::ENTRY_APP:
+      uart::puts("[app] ");
+      break;
+    case menu::ENTRY_SHORTCUT:
+      uart::puts("[shortcut] ");
+      break;
+    case menu::ENTRY_SEP:
+      uart::puts("--------\n");
+      continue;
+    case menu::ENTRY_EXPLORER:
+      uart::puts("[explorer] ");
+      break;
+    case menu::ENTRY_ABOUT:
+      uart::puts("[about] ");
+      break;
+    case menu::ENTRY_SHUTDOWN:
+      uart::puts("[shutdown] ");
+      break;
+    case menu::ENTRY_COMMAND:
+      uart::puts("[cmd] ");
+      break;
+    }
+    uart::puts(e->label);
+    if (e->id[0]) {
+      uart::puts(" (");
+      uart::puts(e->id);
+      uart::puts(")");
+    }
+    uart::putc('\n');
+  }
+}
+
 void cmd_reboot() {
   if (disk::is_available()) {
     uart::puts("Syncing to disk... ");
@@ -461,6 +664,18 @@ void execute(char *input) {
     cmd_export(argc, args);
   else if (str::cmp(cmd, "unset") == 0)
     cmd_unset(argc, args);
+  else if (str::cmp(cmd, "assoc") == 0)
+    cmd_assoc(argc, args);
+  else if (str::cmp(cmd, "unassoc") == 0)
+    cmd_unassoc(argc, args);
+  else if (str::cmp(cmd, "lsassoc") == 0)
+    cmd_lsassoc();
+  else if (str::cmp(cmd, "pin") == 0)
+    cmd_pin(argc, args);
+  else if (str::cmp(cmd, "unpin") == 0)
+    cmd_unpin(argc, args);
+  else if (str::cmp(cmd, "lsmenu") == 0)
+    cmd_lsmenu();
   else {
     // Try to resolve command from PATH (e.g. "notepad" -> "/bin/notepad.ogz")
     const char *app_id = env::resolve_command(cmd);

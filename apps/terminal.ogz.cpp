@@ -1,8 +1,13 @@
 #include "app.h"
+#include "assoc.h"
+#include "disk.h"
 #include "env.h"
+#include "fb.h"
 #include "fs.h"
 #include "graphics.h"
 #include "gui.h"
+#include "menu.h"
+#include "net.h"
 #include "registry.h"
 #include "string.h"
 #include "syslog.h"
@@ -92,20 +97,13 @@ void term_exec(TermState *s) {
 
   if (str::cmp(p, "help") == 0) {
     term_append(s, "Commands:\n");
-    term_append(s, "  ls        List directory\n");
-    term_append(s, "  cd <dir>  Change directory\n");
-    term_append(s, "  pwd       Print working directory\n");
-    term_append(s, "  cat <f>   Show file contents\n");
-    term_append(s, "  mkdir <d> Create directory\n");
-    term_append(s, "  touch <f> Create file\n");
-    term_append(s, "  echo <t>  Print text\n");
-    term_append(s, "  rm <f>    Remove file/dir\n");
-    term_append(s, "  env       Show environment\n");
-    term_append(s, "  export K=V  Set env variable\n");
-    term_append(s, "  unset K   Remove env variable\n");
-    term_append(s, "  clear     Clear screen\n");
-    term_append(s, "  <app>     Run app from PATH\n");
-    term_append(s, "  help      This message\n");
+    term_append(s, " ls cd pwd cat mkdir touch\n");
+    term_append(s, " rm write append stat echo\n");
+    term_append(s, " env export unset uname uptime\n");
+    term_append(s, " sync reboot halt ifconfig\n");
+    term_append(s, " assoc unassoc lsassoc\n");
+    term_append(s, " pin unpin lsmenu clear\n");
+    term_append(s, " <app>  Run app from PATH\n");
   } else if (str::cmp(p, "clear") == 0) {
     s->output[0] = '\0';
     s->out_len = 0;
@@ -262,6 +260,240 @@ void term_exec(TermState *s) {
         term_append(s, "\n");
       }
     }
+  } else if (str::cmp(p, "assoc") == 0) {
+    // Parse ".ext app_id"
+    char a_copy[200];
+    str::ncpy(a_copy, arg, 199);
+    char *a2 = a_copy;
+    while (*a2 && *a2 != ' ') a2++;
+    if (*a2 == ' ') { *a2 = '\0'; a2++; while (*a2 == ' ') a2++; }
+    if (a_copy[0] == '\0' || *a2 == '\0') {
+      term_append(s, "usage: assoc .ext app.ogz\n");
+    } else {
+      assoc::set(a_copy, a2);
+      assoc::save();
+      term_append(s, a_copy);
+      term_append(s, " -> ");
+      term_append(s, a2);
+      term_append(s, "\n");
+    }
+  } else if (str::cmp(p, "unassoc") == 0) {
+    if (*arg == '\0') {
+      term_append(s, "usage: unassoc .ext\n");
+    } else if (!assoc::unset(arg)) {
+      term_append(s, "unassoc: not found\n");
+    } else {
+      assoc::save();
+    }
+  } else if (str::cmp(p, "lsassoc") == 0) {
+    for (i32 i = 0; i < assoc::count(); i++) {
+      const char *ext = assoc::ext_at(i);
+      const char *app = assoc::app_at(i);
+      if (ext) {
+        term_append(s, "  ");
+        term_append(s, ext);
+        term_append(s, " -> ");
+        term_append(s, app);
+        term_append(s, "\n");
+      }
+    }
+  } else if (str::cmp(p, "pin") == 0) {
+    if (*arg == '\0') {
+      term_append(s, "usage: pin <app|path> [label]\n");
+      term_append(s, "       pin --cmd <cmd> [label]\n");
+    } else if (str::ncmp(arg, "--cmd ", 6) == 0) {
+      // pin --cmd "command" [label]
+      char cmd_buf[200];
+      str::ncpy(cmd_buf, arg + 6, 199);
+      char *clbl = cmd_buf;
+      while (*clbl && *clbl != ' ') clbl++;
+      if (*clbl == ' ') { *clbl = '\0'; clbl++; while (*clbl == ' ') clbl++; }
+      menu::add(menu::ENTRY_COMMAND, *clbl ? clbl : cmd_buf, cmd_buf);
+      menu::save();
+      term_append(s, "Pinned command: ");
+      term_append(s, cmd_buf);
+      term_append(s, "\n");
+    } else {
+      // Parse "id label"
+      char pin_id[64];
+      str::ncpy(pin_id, arg, 63);
+      char *lbl = pin_id;
+      while (*lbl && *lbl != ' ') lbl++;
+      if (*lbl == ' ') { *lbl = '\0'; lbl++; while (*lbl == ' ') lbl++; }
+      if (apps::find(pin_id)) {
+        if (menu::has_app(pin_id)) {
+          term_append(s, "already in menu\n");
+        } else {
+          const OgzApp *a = apps::find(pin_id);
+          i32 pos = 0;
+          for (i32 i = 0; i < menu::count(); i++) {
+            const menu::Entry *e = menu::get(i);
+            if (e && e->type == menu::ENTRY_SEP) { pos = i; break; }
+            pos = i + 1;
+          }
+          menu::insert(pos, menu::ENTRY_APP, *lbl ? lbl : a->name, pin_id);
+          menu::save();
+          term_append(s, "Pinned: ");
+          term_append(s, pin_id);
+          term_append(s, "\n");
+        }
+      } else {
+        menu::add(menu::ENTRY_SHORTCUT, *lbl ? lbl : pin_id, pin_id);
+        menu::save();
+        term_append(s, "Pinned shortcut: ");
+        term_append(s, pin_id);
+        term_append(s, "\n");
+      }
+    }
+  } else if (str::cmp(p, "unpin") == 0) {
+    if (*arg == '\0') {
+      term_append(s, "usage: unpin <app|label>\n");
+    } else {
+      i32 idx = menu::find(arg);
+      if (idx < 0) {
+        for (i32 i = 0; i < menu::count(); i++) {
+          const menu::Entry *e = menu::get(i);
+          if (e && str::cmp(e->label, arg) == 0) { idx = i; break; }
+        }
+      }
+      if (idx < 0) {
+        term_append(s, "unpin: not found\n");
+      } else {
+        const menu::Entry *e = menu::get(idx);
+        if (e && e->type == menu::ENTRY_SHUTDOWN) {
+          term_append(s, "unpin: cannot remove Shutdown\n");
+        } else {
+          menu::remove(idx);
+          menu::save();
+          term_append(s, "Unpinned\n");
+        }
+      }
+    }
+  } else if (str::cmp(p, "lsmenu") == 0) {
+    for (i32 i = 0; i < menu::count(); i++) {
+      const menu::Entry *e = menu::get(i);
+      if (!e) continue;
+      char ib[4];
+      ib[0] = '0' + static_cast<char>(i % 10);
+      if (i >= 10) { ib[0] = '0' + static_cast<char>(i / 10); ib[1] = '0' + static_cast<char>(i % 10); ib[2] = '\0'; }
+      else { ib[1] = '\0'; }
+      term_append(s, ib);
+      term_append(s, ". ");
+      if (e->type == menu::ENTRY_SEP) { term_append(s, "--------\n"); continue; }
+      term_append(s, e->label);
+      if (e->id[0]) { term_append(s, " ("); term_append(s, e->id); term_append(s, ")"); }
+      term_append(s, "\n");
+    }
+  } else if (str::cmp(p, "uname") == 0) {
+    term_append(s, "OguzOS 1.0.0 arm64 (QEMU virt / UTM)\n");
+  } else if (str::cmp(p, "uptime") == 0) {
+    u64 cnt, freq;
+    asm volatile("mrs %0, cntpct_el0" : "=r"(cnt));
+    asm volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+    if (freq == 0) freq = 1;
+    u64 sec = cnt / freq;
+    u64 min = sec / 60;
+    u64 hr = min / 60;
+    char ubuf[64];
+    ubuf[0] = '\0';
+    str::cat(ubuf, "up ");
+    auto append_u64 = [](char *dst, u64 v) {
+      char tmp[20]; i32 i = 0;
+      if (v == 0) { tmp[i++] = '0'; }
+      else { while (v > 0) { tmp[i++] = '0' + static_cast<char>(v % 10); v /= 10; } }
+      usize len = str::len(dst);
+      while (i > 0) dst[len++] = tmp[--i];
+      dst[len] = '\0';
+    };
+    if (hr > 0) { append_u64(ubuf, hr); str::cat(ubuf, "h "); }
+    append_u64(ubuf, min % 60); str::cat(ubuf, "m ");
+    append_u64(ubuf, sec % 60); str::cat(ubuf, "s\n");
+    term_append(s, ubuf);
+  } else if (str::cmp(p, "sync") == 0) {
+    if (!disk::is_available()) {
+      term_append(s, "sync: no disk\n");
+    } else if (fs::sync_to_disk()) {
+      term_append(s, "synced\n");
+    } else {
+      term_append(s, "sync: failed\n");
+    }
+  } else if (str::cmp(p, "stat") == 0) {
+    if (*arg == '\0') {
+      term_append(s, "usage: stat <name>\n");
+    } else {
+      char saved_cwd[256];
+      fs::get_cwd(saved_cwd, sizeof(saved_cwd));
+      fs::cd(s->cwd);
+      i32 fi = fs::resolve(arg);
+      if (fi < 0) {
+        term_append(s, "stat: not found\n");
+      } else {
+        const fs::Node *n = fs::get_node(fi);
+        if (n) {
+          term_append(s, "  Name: "); term_append(s, n->name); term_append(s, "\n");
+          term_append(s, "  Type: ");
+          term_append(s, n->type == fs::NodeType::Directory ? "directory" : "file");
+          term_append(s, "\n");
+        }
+      }
+      fs::cd(saved_cwd);
+    }
+  } else if (str::cmp(p, "write") == 0) {
+    // write <file> <text>
+    char w_copy[200];
+    str::ncpy(w_copy, arg, 199);
+    char *wtxt = w_copy;
+    while (*wtxt && *wtxt != ' ') wtxt++;
+    if (*wtxt == ' ') { *wtxt = '\0'; wtxt++; while (*wtxt == ' ') wtxt++; }
+    if (w_copy[0] == '\0' || *wtxt == '\0') {
+      term_append(s, "usage: write <file> <text>\n");
+    } else {
+      char saved_cwd[256];
+      fs::get_cwd(saved_cwd, sizeof(saved_cwd));
+      fs::cd(s->cwd);
+      char wbuf[fs::MAX_CONTENT];
+      str::ncpy(wbuf, wtxt, fs::MAX_CONTENT - 2);
+      str::cat(wbuf, "\n");
+      fs::write(w_copy, wbuf);
+      fs::cd(saved_cwd);
+    }
+  } else if (str::cmp(p, "append") == 0) {
+    char a_copy2[200];
+    str::ncpy(a_copy2, arg, 199);
+    char *atxt = a_copy2;
+    while (*atxt && *atxt != ' ') atxt++;
+    if (*atxt == ' ') { *atxt = '\0'; atxt++; while (*atxt == ' ') atxt++; }
+    if (a_copy2[0] == '\0' || *atxt == '\0') {
+      term_append(s, "usage: append <file> <text>\n");
+    } else {
+      char saved_cwd[256];
+      fs::get_cwd(saved_cwd, sizeof(saved_cwd));
+      fs::cd(s->cwd);
+      char abuf[fs::MAX_CONTENT];
+      str::ncpy(abuf, atxt, fs::MAX_CONTENT - 2);
+      str::cat(abuf, "\n");
+      fs::append(a_copy2, abuf);
+      fs::cd(saved_cwd);
+    }
+  } else if (str::cmp(p, "ifconfig") == 0) {
+    if (net::is_available()) {
+      term_append(s, "eth0: 10.0.2.15\n");
+      term_append(s, "gw:   10.0.2.2\n");
+    } else {
+      term_append(s, "no network\n");
+    }
+  } else if (str::cmp(p, "halt") == 0) {
+    if (disk::is_available()) fs::sync_to_disk();
+    term_append(s, "System halted.\n");
+    u64 psci_off = 0x84000008;
+    asm volatile("mov x0, %0\nhvc #0\n" ::"r"(psci_off) : "x0");
+    for (;;) asm volatile("wfe");
+  } else if (str::cmp(p, "reboot") == 0) {
+    if (disk::is_available()) fs::sync_to_disk();
+    term_append(s, "Rebooting...\n");
+    u64 psci_reset = 0x84000009;
+    asm volatile("mov x0, %0\nhvc #0\n" ::"r"(psci_reset) : "x0");
+    for (;;) asm volatile("wfe");
   } else {
     // Try to resolve command from PATH
     const char *app_id = env::resolve_command(p);
@@ -400,20 +632,34 @@ void terminal_arrow(u8 *, char) {
 
 void terminal_close(u8 *) {}
 
+void terminal_open_file(u8 *state, const char * /*path*/, const char *content) {
+  // "content" is treated as a command to execute
+  auto *s = reinterpret_cast<TermState *>(state);
+  if (!content || content[0] == '\0')
+    return;
+  str::ncpy(s->cmd, content, 199);
+  s->cmd_len = static_cast<i32>(str::len(s->cmd));
+  term_append(s, s->cmd);
+  term_exec(s);
+  s->cmd[0] = '\0';
+  s->cmd_len = 0;
+}
+
 const OgzApp terminal_app = {
-    "Terminal",        // name
-    "terminal.ogz",   // id
-    720,               // default_w
-    500,               // default_h
-    terminal_open,     // on_open
-    terminal_draw,     // on_draw
-    terminal_key,      // on_key
-    terminal_arrow,    // on_arrow
-    terminal_close,    // on_close
-    nullptr,           // on_click
-    nullptr,           // on_scroll
-    nullptr,           // on_mouse_down
-    nullptr,           // on_mouse_move
+    "Terminal",           // name
+    "terminal.ogz",      // id
+    720,                  // default_w
+    500,                  // default_h
+    terminal_open,        // on_open
+    terminal_draw,        // on_draw
+    terminal_key,         // on_key
+    terminal_arrow,       // on_arrow
+    terminal_close,       // on_close
+    nullptr,              // on_click
+    nullptr,              // on_scroll
+    nullptr,              // on_mouse_down
+    nullptr,              // on_mouse_move
+    terminal_open_file,   // on_open_file
 };
 
 } // anonymous namespace

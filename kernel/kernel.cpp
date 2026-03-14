@@ -1,5 +1,7 @@
+#include "assoc.h"
 #include "disk.h"
 #include "env.h"
+#include "menu.h"
 #include "fb.h"
 #include "fs.h"
 #include "gui.h"
@@ -121,6 +123,22 @@ extern "C" void kernel_main() {
   // Initialize environment variables
   env::init();
 
+  // Initialize file associations (load saved or set defaults)
+  assoc::init();
+  assoc::load();
+  if (assoc::count() == 0) {
+    assoc::set(".txt", "notepad.ogz");
+    assoc::set(".md", "notepad.ogz");
+    assoc::set(".log", "notepad.ogz");
+    assoc::set(".cfg", "notepad.ogz");
+    assoc::set(".conf", "notepad.ogz");
+    assoc::set(".csv", "notepad.ogz");
+    assoc::set(".sh", "notepad.ogz");
+    assoc::set(".json", "notepad.ogz");
+    assoc::save();
+    syslog::info("kernel", "created default /etc/filetypes");
+  }
+
   // Enable file logging now that fs is ready
   syslog::init();
 
@@ -152,6 +170,25 @@ extern "C" void kernel_main() {
   }
   fs::cd("/");
   syslog::info("kernel", "installed %d binaries in /bin", apps::count());
+
+  // Initialize start menu (load saved or build default)
+  menu::init();
+  menu::load();
+  if (menu::count() == 0) {
+    // Pin all registered apps
+    for (i32 i = 0; i < apps::count(); i++) {
+      const OgzApp *app = apps::get(i);
+      if (app)
+        menu::add(menu::ENTRY_APP, app->name, app->id);
+    }
+    menu::add(menu::ENTRY_SEP, "---", "");
+    menu::add(menu::ENTRY_EXPLORER, "File Explorer", "");
+    menu::add(menu::ENTRY_ABOUT, "About OguzOS", "");
+    menu::add(menu::ENTRY_SEP, "---", "");
+    menu::add(menu::ENTRY_SHUTDOWN, "Shutdown", "");
+    menu::save();
+    syslog::info("kernel", "created default /etc/menu");
+  }
 
   // Print welcome banner
   print_banner();

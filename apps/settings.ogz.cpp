@@ -1,7 +1,9 @@
 #include "app.h"
+#include "assoc.h"
 #include "fb.h"
 #include "graphics.h"
 #include "keyboard.h"
+#include "menu.h"
 #include "mouse.h"
 #include "registry.h"
 #include "settings.h"
@@ -82,12 +84,22 @@ constexpr i32 BG_COUNT = sizeof(bg_presets) / sizeof(bg_presets[0]);
 // ── State ───────────────────────────────────────────────────────────────────
 
 struct SettingsState {
-  i32 tab;       // 0=Region, 1=Display, 2=Keyboard, 3=Background
+  i32 tab;       // 0=Region, 1=Display, 2=Keyboard, 3=Background, 4=File Types
   i32 tz_sel;    // selected timezone
   i32 tz_scroll; // scroll offset for timezone list
   i32 kb_sel;    // selected keyboard layout
   i32 bg_sel;    // selected background color
   bool sb_drag;  // true when scrollbar is being dragged
+  i32 ft_sel;    // selected file type association
+  i32 ft_scroll; // scroll offset for file types list
+  // Inline editor for new/edit association
+  char ft_ext[16];   // extension being edited
+  char ft_app[32];   // app id being edited
+  i32 ft_edit;       // -1 = not editing, >=0 = editing that index
+  i32 ft_field;      // 0 = ext field, 1 = app field
+  bool ft_adding;    // true when adding a new entry
+  i32 mn_sel;        // selected menu entry
+  i32 mn_scroll;     // scroll offset for menu list
 };
 
 static_assert(sizeof(SettingsState) <= 4096, "SettingsState exceeds app_state");
@@ -153,8 +165,9 @@ i32 find_tz_by_offset(i32 offset) {
 
 // ── Tab drawing helpers ─────────────────────────────────────────────────────
 
-const char *tab_labels[] = {"Region", "Display", "Keyboard", "Background"};
-constexpr i32 TAB_COUNT = 4;
+const char *tab_labels[] = {"Region", "Display", "Keyboard", "Backgrnd",
+                            "Files", "Menu"};
+constexpr i32 TAB_COUNT = 6;
 
 void draw_tabs(SettingsState *s, i32 cx, i32 cy, i32 cw) {
   i32 tab_w = cw / TAB_COUNT;
@@ -402,6 +415,178 @@ void draw_background(SettingsState *s, i32 cx, i32 cy, i32 cw, i32 ch) {
   }
 }
 
+// ── File Types tab ──────────────────────────────────────────────────────────
+
+void draw_filetypes(SettingsState *s, i32 cx, i32 cy, i32 cw, i32 ch) {
+  i32 x = cx + PAD;
+  i32 y = cy + PAD;
+  i32 w = cw - PAD * 2;
+  i32 max_y = cy + ch - PAD;
+
+  gfx::draw_text(x, y, "File Type Associations", COL_SECTION, COL_BG);
+  y += LINE_H + 4;
+
+  // Column headers
+  gfx::fill_rect(x, y, w, LINE_H, 0x00383850);
+  gfx::draw_text(x + 4, y + 1, "Extension", COL_LABEL, 0x00383850);
+  gfx::draw_text(x + CHAR_W * 14, y + 1, "Opens with", COL_LABEL, 0x00383850);
+  y += LINE_H;
+
+  // List entries
+  i32 list_top = y;
+  i32 list_h = max_y - y - LINE_H - 8; // leave room for hint
+  i32 visible = list_h / LINE_H;
+  if (visible < 1)
+    visible = 1;
+
+  // Clamp scroll
+  i32 total = assoc::count();
+  i32 max_sc = total - visible;
+  if (max_sc < 0)
+    max_sc = 0;
+  if (s->ft_scroll > max_sc)
+    s->ft_scroll = max_sc;
+  if (s->ft_scroll < 0)
+    s->ft_scroll = 0;
+
+  // Ensure selection visible
+  if (s->ft_sel < s->ft_scroll)
+    s->ft_scroll = s->ft_sel;
+  if (s->ft_sel >= s->ft_scroll + visible)
+    s->ft_scroll = s->ft_sel - visible + 1;
+
+  i32 drawn = 0;
+  for (i32 i = s->ft_scroll; i < total && drawn < visible; i++) {
+    const char *ext = assoc::ext_at(i);
+    const char *app = assoc::app_at(i);
+    if (!ext)
+      continue;
+
+    i32 iy = list_top + drawn * LINE_H;
+    if (iy + LINE_H > max_y - LINE_H - 8)
+      break;
+
+    bool selected = (i == s->ft_sel);
+    u32 bg = selected ? COL_ITEM_SEL : ((drawn % 2 == 0) ? COL_BG : COL_ITEM_BG);
+    gfx::fill_rect(x, iy, w, LINE_H, bg);
+    u32 tc = selected ? 0x00FFFFFF : COL_VALUE;
+    gfx::draw_text(x + 4, iy + 1, ext, tc, bg);
+    gfx::draw_text(x + CHAR_W * 14, iy + 1, app, selected ? 0x00FFFFFF : COL_TEXT_DIM, bg);
+    drawn++;
+  }
+
+  // Hint at bottom
+  i32 hint_y = max_y - LINE_H;
+  gfx::draw_text(x + 4, hint_y,
+                  "Del: remove  |  Use shell: assoc .ext app.ogz",
+                  COL_TEXT_DIM, COL_BG);
+}
+
+// ── Menu tab ────────────────────────────────────────────────────────────────
+
+const char *entry_type_str(menu::EntryType t) {
+  switch (t) {
+  case menu::ENTRY_APP:      return "[app]";
+  case menu::ENTRY_SHORTCUT: return "[shortcut]";
+  case menu::ENTRY_SEP:      return "---";
+  case menu::ENTRY_EXPLORER: return "[explorer]";
+  case menu::ENTRY_ABOUT:    return "[about]";
+  case menu::ENTRY_SHUTDOWN: return "[shutdown]";
+  case menu::ENTRY_COMMAND:  return "[cmd]";
+  default: return "?";
+  }
+}
+
+void draw_menu_tab(SettingsState *s, i32 cx, i32 cy, i32 cw, i32 ch) {
+  i32 x = cx + PAD;
+  i32 y = cy + PAD;
+  i32 w = cw - PAD * 2;
+  i32 max_y = cy + ch - PAD;
+
+  gfx::draw_text(x, y, "Start Menu Entries", COL_SECTION, COL_BG);
+  y += LINE_H + 4;
+
+  // Column headers
+  gfx::fill_rect(x, y, w, LINE_H, 0x00383850);
+  gfx::draw_text(x + 4, y + 1, "#", COL_LABEL, 0x00383850);
+  gfx::draw_text(x + CHAR_W * 3, y + 1, "Type", COL_LABEL, 0x00383850);
+  gfx::draw_text(x + CHAR_W * 15, y + 1, "Label", COL_LABEL, 0x00383850);
+  y += LINE_H;
+
+  i32 list_top = y;
+  i32 list_h = max_y - y - LINE_H * 2 - 4;
+  i32 visible = list_h / LINE_H;
+  if (visible < 1)
+    visible = 1;
+
+  i32 total = menu::count();
+  i32 max_sc = total - visible;
+  if (max_sc < 0) max_sc = 0;
+  if (s->mn_scroll > max_sc) s->mn_scroll = max_sc;
+  if (s->mn_scroll < 0) s->mn_scroll = 0;
+  if (s->mn_sel < s->mn_scroll) s->mn_scroll = s->mn_sel;
+  if (s->mn_sel >= s->mn_scroll + visible) s->mn_scroll = s->mn_sel - visible + 1;
+
+  i32 drawn = 0;
+  for (i32 i = s->mn_scroll; i < total && drawn < visible; i++) {
+    const menu::Entry *e = menu::get(i);
+    if (!e) continue;
+
+    i32 iy = list_top + drawn * LINE_H;
+    if (iy + LINE_H > max_y - LINE_H * 2 - 4) break;
+
+    bool selected = (i == s->mn_sel);
+    u32 bg = selected ? COL_ITEM_SEL : ((drawn % 2 == 0) ? COL_BG : COL_ITEM_BG);
+    gfx::fill_rect(x, iy, w, LINE_H, bg);
+
+    // Index number
+    char idx_buf[4];
+    idx_buf[0] = '0' + static_cast<char>(i % 10);
+    if (i >= 10) {
+      idx_buf[0] = '0' + static_cast<char>(i / 10);
+      idx_buf[1] = '0' + static_cast<char>(i % 10);
+      idx_buf[2] = '\0';
+    } else {
+      idx_buf[1] = '\0';
+    }
+    u32 tc = selected ? 0x00FFFFFF : COL_TEXT_DIM;
+    gfx::draw_text(x + 4, iy + 1, idx_buf, tc, bg);
+
+    // Type
+    const char *tstr = entry_type_str(e->type);
+    gfx::draw_text(x + CHAR_W * 3, iy + 1, tstr,
+                    selected ? 0x00FFFFFF : COL_VALUE, bg);
+
+    // Label
+    const char *lbl = (e->type == menu::ENTRY_SEP) ? "" : e->label;
+    gfx::draw_text(x + CHAR_W * 15, iy + 1, lbl,
+                    selected ? 0x00FFFFFF : COL_TEXT, bg);
+    drawn++;
+  }
+
+  // Action buttons at bottom
+  i32 btn_y = max_y - LINE_H * 2;
+  constexpr i32 BTN_W = 80;
+  constexpr i32 BTN_GAP = 8;
+
+  // "Add App" button
+  gfx::fill_rect(x, btn_y, BTN_W, LINE_H, 0x00336644);
+  gfx::draw_text(x + 6, btn_y + 1, "+ App", COL_TEXT, 0x00336644);
+
+  // "Add Sep" button
+  gfx::fill_rect(x + BTN_W + BTN_GAP, btn_y, BTN_W, LINE_H, 0x00444466);
+  gfx::draw_text(x + BTN_W + BTN_GAP + 6, btn_y + 1, "+ Sep", COL_TEXT, 0x00444466);
+
+  // "Move Up" button
+  gfx::fill_rect(x + (BTN_W + BTN_GAP) * 2, btn_y, BTN_W, LINE_H, 0x00445566);
+  gfx::draw_text(x + (BTN_W + BTN_GAP) * 2 + 10, btn_y + 1, "Move Up", COL_TEXT, 0x00445566);
+
+  // Hint
+  gfx::draw_text(x + 4, btn_y + LINE_H + 2,
+                  "Del: remove  |  Click buttons or use shell",
+                  COL_TEXT_DIM, COL_BG);
+}
+
 // ── Callbacks ───────────────────────────────────────────────────────────────
 
 void settings_open(u8 *state) {
@@ -412,6 +597,15 @@ void settings_open(u8 *state) {
   s->kb_sel = settings::get_kbd_layout();
   s->bg_sel = 0;
   s->sb_drag = false;
+  s->ft_sel = 0;
+  s->ft_scroll = 0;
+  s->ft_edit = -1;
+  s->ft_field = 0;
+  s->ft_adding = false;
+  s->ft_ext[0] = '\0';
+  s->ft_app[0] = '\0';
+  s->mn_sel = 0;
+  s->mn_scroll = 0;
 
   // Find currently active background color
   u32 cur = settings::get_desktop_color();
@@ -454,6 +648,12 @@ void settings_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
   case 3:
     draw_background(s, cx, content_y, cw, content_h);
     break;
+  case 4:
+    draw_filetypes(s, cx, content_y, cw, content_h);
+    break;
+  case 5:
+    draw_menu_tab(s, cx, content_y, cw, content_h);
+    break;
   }
 }
 
@@ -492,6 +692,29 @@ bool settings_key(u8 *state, char key) {
     return true;
   }
 
+  // Delete key (DEL=0x7F) removes selected entry
+  if ((key == 0x7F || key == 0x08) && s->tab == 5) {
+    const menu::Entry *e = menu::get(s->mn_sel);
+    if (e && e->type != menu::ENTRY_SHUTDOWN) {
+      menu::remove(s->mn_sel);
+      menu::save();
+      if (s->mn_sel > 0 && s->mn_sel >= menu::count())
+        s->mn_sel = menu::count() - 1;
+    }
+    return true;
+  }
+
+  if ((key == 0x7F || key == 0x08) && s->tab == 4) {
+    const char *ext = assoc::ext_at(s->ft_sel);
+    if (ext) {
+      assoc::unset(ext);
+      assoc::save();
+      if (s->ft_sel > 0 && s->ft_sel >= assoc::count())
+        s->ft_sel = assoc::count() - 1;
+    }
+    return true;
+  }
+
   return false;
 }
 
@@ -521,6 +744,14 @@ void settings_arrow(u8 *state, char dir) {
       if (s->bg_sel > 0)
         s->bg_sel--;
       break;
+    case 4:
+      if (s->ft_sel > 0)
+        s->ft_sel--;
+      break;
+    case 5:
+      if (s->mn_sel > 0)
+        s->mn_sel--;
+      break;
     }
   } else if (dir == 'B') {
     // Down → next item in list
@@ -536,6 +767,14 @@ void settings_arrow(u8 *state, char dir) {
     case 3:
       if (s->bg_sel < BG_COUNT - 1)
         s->bg_sel++;
+      break;
+    case 4:
+      if (s->ft_sel < assoc::count() - 1)
+        s->ft_sel++;
+      break;
+    case 5:
+      if (s->mn_sel < menu::count() - 1)
+        s->mn_sel++;
       break;
     }
   }
@@ -652,6 +891,71 @@ void settings_click(u8 *state, i32 rx, i32 ry, i32 cw, i32 ch) {
     }
     break;
   }
+  case 4: {
+    // File Types: click on association list
+    // header line = LINE_H + 4, then column header = LINE_H
+    i32 list_y = PAD + LINE_H + 4 + LINE_H;
+    i32 local_y = content_ry - list_y;
+    if (local_y >= 0) {
+      i32 clicked = local_y / LINE_H + s->ft_scroll;
+      if (clicked >= 0 && clicked < assoc::count())
+        s->ft_sel = clicked;
+    }
+    break;
+  }
+  case 5: {
+    // Menu tab
+    i32 list_y = PAD + LINE_H + 4 + LINE_H;
+    i32 content_h_tab = ch - TAB_H - 2;
+    i32 btn_y = content_h_tab - PAD - LINE_H * 2;
+
+    // Check button clicks
+    constexpr i32 BTN_W = 80;
+    constexpr i32 BTN_GAP = 8;
+    if (content_ry >= btn_y && content_ry < btn_y + LINE_H) {
+      i32 bx = rx - PAD;
+      if (bx >= 0 && bx < BTN_W) {
+        // "+ App" button: pin next unpinned app
+        for (i32 i = 0; i < apps::count(); i++) {
+          const OgzApp *a = apps::get(i);
+          if (a && !menu::has_app(a->id)) {
+            // Insert before first separator
+            i32 pos = menu::count();
+            for (i32 j = 0; j < menu::count(); j++) {
+              const menu::Entry *e = menu::get(j);
+              if (e && e->type == menu::ENTRY_SEP) { pos = j; break; }
+            }
+            menu::insert(pos, menu::ENTRY_APP, a->name, a->id);
+            menu::save();
+            s->mn_sel = pos;
+            break;
+          }
+        }
+      } else if (bx >= BTN_W + BTN_GAP && bx < BTN_W * 2 + BTN_GAP) {
+        // "+ Sep" button
+        menu::insert(s->mn_sel + 1, menu::ENTRY_SEP, "---", "");
+        menu::save();
+        s->mn_sel++;
+      } else if (bx >= (BTN_W + BTN_GAP) * 2 && bx < (BTN_W + BTN_GAP) * 2 + BTN_W) {
+        // "Move Up" button
+        if (s->mn_sel > 0) {
+          menu::move(s->mn_sel, s->mn_sel - 1);
+          menu::save();
+          s->mn_sel--;
+        }
+      }
+      break;
+    }
+
+    // Click on entry list
+    i32 local_y = content_ry - list_y;
+    if (local_y >= 0) {
+      i32 clicked = local_y / LINE_H + s->mn_scroll;
+      if (clicked >= 0 && clicked < menu::count())
+        s->mn_sel = clicked;
+    }
+    break;
+  }
   }
 }
 
@@ -723,11 +1027,22 @@ void settings_scroll(u8 *state, i32 delta) {
   auto *s = reinterpret_cast<SettingsState *>(state);
 
   if (s->tab == 0) {
-    // Region tab: scroll timezone list
     s->tz_scroll -= delta * 3;
     if (s->tz_scroll < 0) s->tz_scroll = 0;
-    i32 max_sc = TZ_COUNT - 1; // will be clamped in draw
+    i32 max_sc = TZ_COUNT - 1;
     if (s->tz_scroll > max_sc) s->tz_scroll = max_sc;
+  } else if (s->tab == 4) {
+    s->ft_scroll -= delta * 3;
+    if (s->ft_scroll < 0) s->ft_scroll = 0;
+    i32 max_sc = assoc::count() - 1;
+    if (max_sc < 0) max_sc = 0;
+    if (s->ft_scroll > max_sc) s->ft_scroll = max_sc;
+  } else if (s->tab == 5) {
+    s->mn_scroll -= delta * 3;
+    if (s->mn_scroll < 0) s->mn_scroll = 0;
+    i32 max_sc = menu::count() - 1;
+    if (max_sc < 0) max_sc = 0;
+    if (s->mn_scroll > max_sc) s->mn_scroll = max_sc;
   }
 }
 
@@ -749,6 +1064,7 @@ const OgzApp settings_app = {
     settings_scroll,     // on_scroll
     settings_mouse_down, // on_mouse_down
     settings_mouse_move, // on_mouse_move
+    nullptr,             // on_open_file
 };
 
 } // anonymous namespace

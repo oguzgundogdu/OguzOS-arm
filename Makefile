@@ -69,6 +69,8 @@ OBJS = $(BUILD_DIR)/boot.o \
        $(BUILD_DIR)/settingsapp.o \
        $(BUILD_DIR)/settings.o \
        $(BUILD_DIR)/env.o \
+       $(BUILD_DIR)/assoc.o \
+       $(BUILD_DIR)/menu.o \
        $(BUILD_DIR)/shell.o \
        $(BUILD_DIR)/kernel.o
 
@@ -156,6 +158,12 @@ $(BUILD_DIR)/settings.o: $(LIB_DIR)/settings.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/env.o: $(LIB_DIR)/env.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/assoc.o: $(LIB_DIR)/assoc.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/menu.o: $(LIB_DIR)/menu.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/shell.o: $(SHELL_DIR)/shell.cpp | $(BUILD_DIR)

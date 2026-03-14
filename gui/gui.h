@@ -22,6 +22,10 @@ constexpr i32 WTYPE_APP = 2;
 // Open a .ogz app by its id (e.g. "notepad.ogz")
 void open_app(const char *app_id);
 
+// Open a file with its associated app. Falls back to text viewer.
+// path = absolute path, content = file content.
+void open_file(const char *path, const char *content);
+
 // Query open windows for task manager
 i32 get_window_count();
 const char *get_window_title(i32 index);
