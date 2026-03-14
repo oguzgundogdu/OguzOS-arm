@@ -1,5 +1,6 @@
 #include "app.h"
 #include "assoc.h"
+#include "commands.h"
 #include "disk.h"
 #include "env.h"
 #include "fb.h"
@@ -8,9 +9,11 @@
 #include "gui.h"
 #include "menu.h"
 #include "net.h"
+#include "netdev.h"
 #include "registry.h"
 #include "string.h"
 #include "syslog.h"
+#include "uart.h"
 
 /*
  * terminal.ogz — OguzOS Terminal
@@ -66,6 +69,11 @@ void term_prompt(TermState *s) {
   term_append(s, "$ ");
 }
 
+// Adapter: cmd::OutFn -> term_append
+void term_out(void *ctx, const char *text) {
+  term_append(reinterpret_cast<TermState *>(ctx), text);
+}
+
 void term_exec(TermState *s) {
   // Parse command
   char cmd_copy[200];
@@ -97,13 +105,17 @@ void term_exec(TermState *s) {
 
   if (str::cmp(p, "help") == 0) {
     term_append(s, "Commands:\n");
-    term_append(s, " ls cd pwd cat mkdir touch\n");
-    term_append(s, " rm write append stat echo\n");
-    term_append(s, " env export unset uname uptime\n");
-    term_append(s, " sync reboot halt ifconfig\n");
+    term_append(s, " ls cd pwd cat mkdir touch rm\n");
+    term_append(s, " cp mv write append stat\n");
+    term_append(s, " head tail wc grep find tree\n");
+    term_append(s, " xxd df echo clear\n");
+    term_append(s, " date hostname whoami uname\n");
+    term_append(s, " uptime free dmesg which\n");
+    term_append(s, " env export unset sync\n");
+    term_append(s, " ifconfig ping dhcp curl\n");
     term_append(s, " assoc unassoc lsassoc\n");
-    term_append(s, " pin unpin lsmenu clear\n");
-    term_append(s, " <app>  Run app from PATH\n");
+    term_append(s, " pin unpin lsmenu\n");
+    term_append(s, " reboot halt <app>\n");
   } else if (str::cmp(p, "clear") == 0) {
     s->output[0] = '\0';
     s->out_len = 0;
@@ -476,11 +488,48 @@ void term_exec(TermState *s) {
       fs::cd(saved_cwd);
     }
   } else if (str::cmp(p, "ifconfig") == 0) {
-    if (net::is_available()) {
-      term_append(s, "eth0: 10.0.2.15\n");
-      term_append(s, "gw:   10.0.2.2\n");
+    char cbuf[512];
+    uart::capture_start(cbuf, sizeof(cbuf));
+    net::ifconfig();
+    uart::capture_stop();
+    term_append(s, cbuf);
+  } else if (str::cmp(p, "ping") == 0) {
+    if (*arg == '\0') {
+      term_append(s, "usage: ping <ip|host> [count]\n");
     } else {
-      term_append(s, "no network\n");
+      // Parse "target count"
+      char pt[128];
+      str::ncpy(pt, arg, 127);
+      char *pc = pt;
+      while (*pc && *pc != ' ') pc++;
+      u32 cnt = 4;
+      if (*pc == ' ') {
+        *pc = '\0'; pc++;
+        cnt = 0;
+        while (*pc >= '0' && *pc <= '9') { cnt = cnt * 10 + static_cast<u32>(*pc - '0'); pc++; }
+        if (cnt == 0) cnt = 1;
+      }
+      char cbuf[2048];
+      uart::capture_start(cbuf, sizeof(cbuf));
+      net::ping(pt, cnt);
+      uart::capture_stop();
+      term_append(s, cbuf);
+    }
+  } else if (str::cmp(p, "dhcp") == 0) {
+    char cbuf[512];
+    uart::capture_start(cbuf, sizeof(cbuf));
+    net::dhcp();
+    uart::capture_stop();
+    term_append(s, cbuf);
+  } else if (str::cmp(p, "curl") == 0) {
+    if (*arg == '\0') {
+      term_append(s, "usage: curl <url>\n");
+    } else {
+      char cbuf[3600];
+      uart::capture_start(cbuf, sizeof(cbuf));
+      net::curl(arg);
+      uart::capture_stop();
+      term_append(s, cbuf);
     }
   } else if (str::cmp(p, "halt") == 0) {
     if (disk::is_available()) fs::sync_to_disk();
@@ -494,6 +543,71 @@ void term_exec(TermState *s) {
     u64 psci_reset = 0x84000009;
     asm volatile("mov x0, %0\nhvc #0\n" ::"r"(psci_reset) : "x0");
     for (;;) asm volatile("wfe");
+  } else if (str::cmp(p, "cp") == 0) {
+    char c1[200]; str::ncpy(c1, arg, 199);
+    char *c2 = c1; while (*c2 && *c2 != ' ') c2++;
+    if (*c2 == ' ') { *c2 = '\0'; c2++; while (*c2 == ' ') c2++; }
+    if (c1[0] == '\0' || *c2 == '\0') term_append(s, "usage: cp <src> <dst>\n");
+    else { char sv[256]; fs::get_cwd(sv, sizeof(sv)); fs::cd(s->cwd); cmd::cp(term_out, s, c1, c2); fs::cd(sv); }
+  } else if (str::cmp(p, "mv") == 0) {
+    char c1[200]; str::ncpy(c1, arg, 199);
+    char *c2 = c1; while (*c2 && *c2 != ' ') c2++;
+    if (*c2 == ' ') { *c2 = '\0'; c2++; while (*c2 == ' ') c2++; }
+    if (c1[0] == '\0' || *c2 == '\0') term_append(s, "usage: mv <src> <dst>\n");
+    else { char sv[256]; fs::get_cwd(sv, sizeof(sv)); fs::cd(s->cwd); cmd::mv(term_out, s, c1, c2); fs::cd(sv); }
+  } else if (str::cmp(p, "head") == 0) {
+    if (*arg == '\0') { term_append(s, "usage: head <file> [n]\n"); }
+    else {
+      char hf[128]; str::ncpy(hf, arg, 127);
+      char *hn = hf; while (*hn && *hn != ' ') hn++;
+      i32 n = 10;
+      if (*hn == ' ') { *hn = '\0'; hn++; n = 0; while (*hn >= '0' && *hn <= '9') { n = n * 10 + (*hn - '0'); hn++; } if (n == 0) n = 10; }
+      char sv[256]; fs::get_cwd(sv, sizeof(sv)); fs::cd(s->cwd);
+      cmd::head(term_out, s, hf, n);
+      fs::cd(sv);
+    }
+  } else if (str::cmp(p, "tail") == 0) {
+    if (*arg == '\0') { term_append(s, "usage: tail <file> [n]\n"); }
+    else {
+      char tf[128]; str::ncpy(tf, arg, 127);
+      char *tn = tf; while (*tn && *tn != ' ') tn++;
+      i32 n = 10;
+      if (*tn == ' ') { *tn = '\0'; tn++; n = 0; while (*tn >= '0' && *tn <= '9') { n = n * 10 + (*tn - '0'); tn++; } if (n == 0) n = 10; }
+      char sv[256]; fs::get_cwd(sv, sizeof(sv)); fs::cd(s->cwd);
+      cmd::tail(term_out, s, tf, n);
+      fs::cd(sv);
+    }
+  } else if (str::cmp(p, "wc") == 0) {
+    if (*arg == '\0') term_append(s, "usage: wc <file>\n");
+    else { char sv[256]; fs::get_cwd(sv, sizeof(sv)); fs::cd(s->cwd); cmd::wc(term_out, s, arg); fs::cd(sv); }
+  } else if (str::cmp(p, "grep") == 0) {
+    char g1[200]; str::ncpy(g1, arg, 199);
+    char *g2 = g1; while (*g2 && *g2 != ' ') g2++;
+    if (*g2 == ' ') { *g2 = '\0'; g2++; while (*g2 == ' ') g2++; }
+    if (g1[0] == '\0' || *g2 == '\0') term_append(s, "usage: grep <pat> <file>\n");
+    else { char sv[256]; fs::get_cwd(sv, sizeof(sv)); fs::cd(s->cwd); cmd::grep(term_out, s, g1, g2); fs::cd(sv); }
+  } else if (str::cmp(p, "find") == 0) {
+    cmd::find(term_out, s, arg);
+  } else if (str::cmp(p, "tree") == 0) {
+    cmd::tree(term_out, s, *arg ? arg : "/", 0);
+  } else if (str::cmp(p, "df") == 0) {
+    cmd::df(term_out, s);
+  } else if (str::cmp(p, "xxd") == 0) {
+    if (*arg == '\0') term_append(s, "usage: xxd <file>\n");
+    else { char sv[256]; fs::get_cwd(sv, sizeof(sv)); fs::cd(s->cwd); cmd::xxd(term_out, s, arg); fs::cd(sv); }
+  } else if (str::cmp(p, "date") == 0) {
+    cmd::date(term_out, s);
+  } else if (str::cmp(p, "hostname") == 0) {
+    cmd::hostname(term_out, s);
+  } else if (str::cmp(p, "whoami") == 0) {
+    cmd::whoami(term_out, s);
+  } else if (str::cmp(p, "free") == 0) {
+    cmd::free_cmd(term_out, s);
+  } else if (str::cmp(p, "dmesg") == 0) {
+    cmd::dmesg(term_out, s);
+  } else if (str::cmp(p, "which") == 0) {
+    if (*arg == '\0') term_append(s, "usage: which <cmd>\n");
+    else cmd::which(term_out, s, arg);
   } else {
     // Try to resolve command from PATH
     const char *app_id = env::resolve_command(p);

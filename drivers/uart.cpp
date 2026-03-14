@@ -20,6 +20,11 @@ constexpr u64 UARTIMSC = 0x038; // Interrupt mask
 constexpr u32 FR_TXFF = (1 << 5); // TX FIFO full
 constexpr u32 FR_RXFE = (1 << 4); // RX FIFO empty
 
+// Output capture state
+char *cap_buf = nullptr;
+usize cap_size = 0;
+usize cap_len = 0;
+
 } // anonymous namespace
 
 namespace uart {
@@ -48,6 +53,12 @@ void putc(char c) {
   while (*reg(UARTFR) & FR_TXFF) {
   }
   *reg(UARTDR) = static_cast<u32>(c);
+
+  // Capture to buffer if active (skip \r for terminal display)
+  if (cap_buf && c != '\r' && cap_len < cap_size - 1) {
+    cap_buf[cap_len++] = c;
+    cap_buf[cap_len] = '\0';
+  }
 }
 
 char getc() {
@@ -98,6 +109,20 @@ void put_int(i64 value) {
   while (--i >= 0) {
     putc(buf[i]);
   }
+}
+
+void capture_start(char *buf, usize buf_size) {
+  cap_buf = buf;
+  cap_size = buf_size;
+  cap_len = 0;
+  if (buf)
+    buf[0] = '\0';
+}
+
+void capture_stop() {
+  cap_buf = nullptr;
+  cap_size = 0;
+  cap_len = 0;
 }
 
 bool try_getc(char &c) {

@@ -1,5 +1,6 @@
 #include "shell.h"
 #include "assoc.h"
+#include "commands.h"
 #include "disk.h"
 #include "env.h"
 #include "menu.h"
@@ -13,6 +14,9 @@
 #include "uart.h"
 
 namespace {
+
+// Adapter: cmd::OutFn -> uart::puts
+void uart_out(void *, const char *text) { uart::puts(text); }
 
 constexpr usize CMD_BUF_SIZE = 256;
 constexpr usize MAX_ARGS = 16;
@@ -92,10 +96,27 @@ void cmd_help() {
   uart::puts("  \033[1mcat\033[0m <file>        Display file contents\n");
   uart::puts("  \033[1mwrite\033[0m <file> <text>  Write text to file\n");
   uart::puts("  \033[1mappend\033[0m <file> <text> Append text to file\n");
+  uart::puts("  \033[1mcp\033[0m <src> <dst>    Copy a file\n");
+  uart::puts("  \033[1mmv\033[0m <src> <dst>    Move/rename a file\n");
   uart::puts(
       "  \033[1mrm\033[0m <name>         Remove file or empty directory\n");
   uart::puts("  \033[1mstat\033[0m <name>        Show file/directory info\n");
+  uart::puts("  \033[1mhead\033[0m <file> [n]   Show first n lines (default 10)\n");
+  uart::puts("  \033[1mtail\033[0m <file> [n]   Show last n lines (default 10)\n");
+  uart::puts("  \033[1mwc\033[0m <file>         Count lines, words, bytes\n");
+  uart::puts("  \033[1mgrep\033[0m <pat> <file> Search for pattern in file\n");
+  uart::puts("  \033[1mfind\033[0m [name]       Search filesystem by name\n");
+  uart::puts("  \033[1mtree\033[0m [path]       Show directory tree\n");
+  uart::puts("  \033[1mxxd\033[0m <file>        Hex dump a file\n");
+  uart::puts("  \033[1mdf\033[0m                Show filesystem usage\n");
   uart::puts("  \033[1msync\033[0m              Save filesystem to disk\n");
+  uart::puts("\n  \033[1;36m-- System Info --\033[0m\n");
+  uart::puts("  \033[1mdate\033[0m              Show current date/time\n");
+  uart::puts("  \033[1mhostname\033[0m          Show system hostname\n");
+  uart::puts("  \033[1mwhoami\033[0m            Show current user\n");
+  uart::puts("  \033[1mfree\033[0m              Show memory/node usage\n");
+  uart::puts("  \033[1mdmesg\033[0m             Show kernel log\n");
+  uart::puts("  \033[1mwhich\033[0m <cmd>       Show command path\n");
   uart::puts("\n  \033[1;36m-- Network --\033[0m\n");
   uart::puts("  \033[1mifconfig\033[0m          Show network configuration\n");
   uart::puts(
@@ -676,7 +697,47 @@ void execute(char *input) {
     cmd_unpin(argc, args);
   else if (str::cmp(cmd, "lsmenu") == 0)
     cmd_lsmenu();
-  else {
+  else if (str::cmp(cmd, "cp") == 0) {
+    if (argc < 3) uart::puts("usage: cp <src> <dst>\n");
+    else cmd::cp(uart_out, nullptr, args[1], args[2]);
+  } else if (str::cmp(cmd, "mv") == 0) {
+    if (argc < 3) uart::puts("usage: mv <src> <dst>\n");
+    else cmd::mv(uart_out, nullptr, args[1], args[2]);
+  } else if (str::cmp(cmd, "head") == 0) {
+    if (argc < 2) uart::puts("usage: head <file> [lines]\n");
+    else { i32 n = 10; if (argc >= 3) { n = 0; for (const char *q = args[2]; *q >= '0' && *q <= '9'; q++) n = n * 10 + (*q - '0'); if (n == 0) n = 10; } cmd::head(uart_out, nullptr, args[1], n); }
+  } else if (str::cmp(cmd, "tail") == 0) {
+    if (argc < 2) uart::puts("usage: tail <file> [lines]\n");
+    else { i32 n = 10; if (argc >= 3) { n = 0; for (const char *q = args[2]; *q >= '0' && *q <= '9'; q++) n = n * 10 + (*q - '0'); if (n == 0) n = 10; } cmd::tail(uart_out, nullptr, args[1], n); }
+  } else if (str::cmp(cmd, "wc") == 0) {
+    if (argc < 2) uart::puts("usage: wc <file>\n");
+    else cmd::wc(uart_out, nullptr, args[1]);
+  } else if (str::cmp(cmd, "grep") == 0) {
+    if (argc < 3) uart::puts("usage: grep <pattern> <file>\n");
+    else cmd::grep(uart_out, nullptr, args[1], args[2]);
+  } else if (str::cmp(cmd, "find") == 0) {
+    cmd::find(uart_out, nullptr, argc >= 2 ? args[1] : "");
+  } else if (str::cmp(cmd, "tree") == 0) {
+    cmd::tree(uart_out, nullptr, argc >= 2 ? args[1] : "/", 0);
+  } else if (str::cmp(cmd, "df") == 0) {
+    cmd::df(uart_out, nullptr);
+  } else if (str::cmp(cmd, "date") == 0) {
+    cmd::date(uart_out, nullptr);
+  } else if (str::cmp(cmd, "hostname") == 0) {
+    cmd::hostname(uart_out, nullptr);
+  } else if (str::cmp(cmd, "whoami") == 0) {
+    cmd::whoami(uart_out, nullptr);
+  } else if (str::cmp(cmd, "free") == 0) {
+    cmd::free_cmd(uart_out, nullptr);
+  } else if (str::cmp(cmd, "dmesg") == 0) {
+    cmd::dmesg(uart_out, nullptr);
+  } else if (str::cmp(cmd, "which") == 0) {
+    if (argc < 2) uart::puts("usage: which <command>\n");
+    else cmd::which(uart_out, nullptr, args[1]);
+  } else if (str::cmp(cmd, "xxd") == 0) {
+    if (argc < 2) uart::puts("usage: xxd <file>\n");
+    else cmd::xxd(uart_out, nullptr, args[1]);
+  } else {
     // Try to resolve command from PATH (e.g. "notepad" -> "/bin/notepad.ogz")
     const char *app_id = env::resolve_command(cmd);
     if (app_id && apps::find(app_id)) {
