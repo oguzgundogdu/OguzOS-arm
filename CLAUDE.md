@@ -15,48 +15,85 @@ make gui          # Build and run with QEMU graphical mode (ramfb + mouse + keyb
 make debug        # Run with QEMU GDB server (-S -s) for debugging
 make dump         # Disassemble the ELF
 make clean        # Remove build/ directory
-make distclean    # Also remove disk.img
+make distclean    # Also remove disk.img (forces fresh filesystem on next boot)
 ```
 
 **Toolchain:** Requires an AArch64 cross-compiler (`aarch64-elf-g++`, `aarch64-none-elf-g++`, or `aarch64-linux-gnu-g++`). The Makefile auto-detects which is available. Override with `CROSS=aarch64-linux-gnu- make`.
+
+**Important:** After changing filesystem layout or config file formats, run `make distclean` to delete the old `disk.img` — otherwise `load_from_disk()` restores the stale image and skips `fs::init()`.
 
 ## Project Structure
 
 ```
 arch/       — ARM64 bootstrap (boot.S), exception vectors (exception.S), linker script
 kernel/     — Kernel entry point (kernel_main)
-drivers/    — Hardware drivers: PL011 UART, Virtio block/net, ramfb, virtio-tablet, virtio-keyboard
-fs/         — In-memory hierarchical file system
-net/        — Network protocol stack (ARP, IPv4, ICMP, UDP, DHCP)
-gui/        — Window manager, desktop rendering, 8x8 bitmap font
-apps/       — GUI applications (notepad, terminal, task manager, settings)
-shell/      — Interactive shell with 20+ commands
-lib/        — Freestanding string/memory utilities, syslog, settings store, type aliases
+drivers/    — PL011 UART, Virtio block/net, ramfb, virtio-tablet, virtio-keyboard
+fs/         — In-memory hierarchical file system (128 nodes, 4KB/file)
+net/        — Network stack (ARP, IPv4, ICMP, UDP, DHCP, DNS, HTTP, NTP)
+gui/        — Window manager, desktop, start menu, file explorer
+apps/       — GUI applications (.ogz.cpp files): notepad, terminal, task manager, settings
+shell/      — UART shell, shared command library (commands.cpp)
+lib/        — String/memory utils, syslog, settings, env vars, file assoc, menu config
 scripts/    — QEMU launcher (run.sh) and UTM image builder (mkimage.sh)
 build/      — Generated object files and binaries (gitignored)
 ```
 
 ## Architecture
 
-**Boot flow:** `arch/boot.S` → `kernel_main()` (kernel/kernel.cpp) → initializes UART, disk, net, FS, syslog, settings → registers apps → DHCP → launches shell loop (never returns).
+### Boot Flow
 
-**Key subsystems:**
+`arch/boot.S` → `kernel_main()` (kernel/kernel.cpp):
+1. UART, disk, framebuffer, mouse, keyboard init
+2. Network init (virtio-net + DHCP + NTP)
+3. Filesystem: load from disk or `fs::init()` (creates `/bin`, `/home`, `/etc`, `/tmp`, `/var`)
+4. `settings::load()`, `env::init()`, `assoc::init()`+load, `syslog::init()`
+5. Register apps → populate `/bin` with app descriptors → build `/etc/menu` defaults
+6. `menu::init()`+load
+7. If framebuffer available → `gui::run()`, else → `shell::run()`
 
-- **arch/boot.S** — Parks secondary CPUs (via MPIDR_EL1), sets up 64KB stack below 0x40080000, zeros BSS, jumps to `kernel_main`
-- **arch/exception.S** — ARM64 exception vector table with try/catch crash recovery (`try_enter`/`try_leave`); used by the GUI to isolate app crashes without killing the OS
-- **arch/linker.ld** — Kernel loaded at 0x40080000; defines `.text`, `.rodata`, `.data`, `.bss` sections and `__bss_start`/`__bss_end` symbols
-- **drivers/** — PL011 UART (0x09000000), virtio-blk (disk), virtio-net, ramfb framebuffer (640x480 XRGB8888 at 0x46000000), virtio-tablet (mouse), virtio-keyboard (8 layouts)
-- **gui/** — Window manager with up to 8 windows, desktop with start menu, file explorer; entered via `gui` shell command
-- **apps/** — Pluggable GUI apps using OgzApp interface (see "Adding New Apps" below)
-- **lib/syslog** — Dual-output logging (UART with ANSI colors + `/var/log/syslog` file); must init after `fs::init()`
-- **lib/settings** — Key-value store persisted to `/etc/settings` (timezone, background color, keyboard layout)
-- **net/** — Ethernet framing, ARP, IPv4, ICMP echo (ping), UDP, DHCP client
-- **fs/** — Max 128 nodes, 4KB per file; can persist to disk via `sync`
-- **shell/** — History (16 entries), ANSI colors, quoted arg parsing
+### Two Shells — Shared Command Library
+
+The OS has two independent command dispatchers:
+- **UART shell** (`shell/shell.cpp` `execute()`) — runs in text-only mode or as serial fallback
+- **GUI terminal** (`apps/terminal.ogz.cpp` `term_exec()`) — runs as a windowed app inside the GUI
+
+Both call the same implementations in `shell/commands.cpp` via a callback-based output abstraction:
+```cpp
+using OutFn = void (*)(void *ctx, const char *text);
+// UART: uart_out(nullptr, text) → uart::puts(text)
+// Terminal: term_out(state, text) → term_append(state, text)
+```
+
+**When adding a new command:** implement it in `commands.cpp`/`commands.h`, then add dispatch entries to BOTH `shell.cpp` AND `terminal.ogz.cpp`. The terminal also needs `uart::capture_start/stop` for commands that print directly to UART (e.g., `net::ping()`).
+
+### Configuration Subsystems
+
+Three runtime-configurable subsystems persist to `/etc/` and auto-save to disk:
+
+| System | File | Header | Purpose |
+|--------|------|--------|---------|
+| `settings::` | `/etc/settings` | `lib/settings.h` | Timezone, desktop color, keyboard layout |
+| `assoc::` | `/etc/filetypes` | `lib/assoc.h` | File extension → app ID mapping |
+| `menu::` | `/etc/menu` | `lib/menu.h` | Start menu entries (apps, shortcuts, commands, built-ins) |
+
+All three call `fs::sync_to_disk()` on save. `env::` (environment variables) is in-memory only.
+
+### GUI File Opening Flow
+
+When a file is double-clicked in the explorer:
+1. `explorer_activate()` builds the absolute path
+2. `gui::open_file(path, content)` checks:
+   - `.ogz` extension → `gui::open_app(name)` (launch the app)
+   - `assoc::find_for_file(name)` → if app has `on_open_file` callback, open app with file content
+   - Fallback → `open_text_viewer(name, content)`
+
+### Start Menu
+
+The start menu is data-driven from `menu::` config (not auto-discovered from the app registry). Entry types: `ENTRY_APP`, `ENTRY_SHORTCUT`, `ENTRY_COMMAND`, `ENTRY_SEP`, `ENTRY_EXPLORER`, `ENTRY_ABOUT`, `ENTRY_SHUTDOWN`. The GUI calls `build_menu()` at startup to populate the display from `menu::` entries.
 
 ## Adding New Source Files
 
-Object files are listed explicitly in the Makefile (not auto-discovered). Some output names differ from source names to avoid basename collisions:
+Object files are listed explicitly in the Makefile `OBJS` list (not auto-discovered). Some output names differ from source names to avoid basename collisions:
 
 - `drivers/net.cpp` → `build/netdev.o` (namespace `netdev`, header: `drivers/netdev.h`)
 - `net/net.cpp` → `build/netstack.o` (namespace `net`, header: `net/net.h`)
@@ -72,10 +109,24 @@ Apps use the `.ogz.cpp` naming convention and follow a function-pointer interfac
 1. Create `apps/myapp.ogz.cpp` implementing the `OgzApp` struct callbacks
 2. Add Makefile rule: `$(BUILD_DIR)/myapp.o: $(APPS_DIR)/myapp.ogz.cpp | $(BUILD_DIR)` and add to `OBJS`
 3. In `kernel/kernel.cpp`: declare `namespace apps { void register_myapp(); }` and call it in `kernel_main()` before the shell loop
+4. The app auto-gets a `/bin/myapp.ogz` entry and appears in the default start menu
 
-**OgzApp callbacks:** `on_open`, `on_draw`, `on_key`, `on_arrow`, `on_close` are required; `on_click`, `on_scroll`, `on_mouse_down`, `on_mouse_move` can be `nullptr`. Each app window gets a 4096-byte `app_state` buffer — use `static_assert(sizeof(MyState) <= 4096)` to enforce. The app auto-appears in the start menu via the registry.
+**OgzApp callbacks:** `on_open`, `on_draw`, `on_key`, `on_arrow`, `on_close` are required; `on_click`, `on_scroll`, `on_mouse_down`, `on_mouse_move`, `on_open_file` can be `nullptr`. Each app window gets a 4096-byte `app_state` buffer — use `static_assert(sizeof(MyState) <= 4096)` to enforce.
 
-**Coordinate convention:** App callbacks receive content area coordinates (cx, cy, cw, ch) excluding the 24px title bar. Mouse click/move positions are relative to content area origin. Scroll delta: positive = up, negative = down.
+**`on_open_file`** — optional callback `void (*)(u8 *state, const char *path, const char *content)` called after `on_open` when the app is launched to open a specific file. Used by Notepad (text editing) and Terminal (command execution).
+
+**Coordinate convention:** `on_draw` receives content area in screen coordinates (cx, cy, cw, ch) excluding the 24px title bar. `on_click`/`on_mouse_down`/`on_mouse_move` receive (rx, ry) relative to content area origin. Scroll delta: positive = up, negative = down.
+
+## Adding New Shell Commands
+
+1. Implement in `shell/commands.h` + `shell/commands.cpp` using the `OutFn` callback pattern
+2. Add dispatch to `shell/shell.cpp` `execute()` (UART shell)
+3. Add dispatch to `apps/terminal.ogz.cpp` `term_exec()` (GUI terminal) — for commands that call UART-printing functions (like `net::ping()`), wrap with `uart::capture_start/stop`
+4. Update help text in both places
+
+## UART Output Capture
+
+`uart::capture_start(buf, size)` / `uart::capture_stop()` in `drivers/uart.h` — when active, `uart::putc()` also writes to the provided buffer (skipping `\r`). Used by the GUI terminal to capture output from functions that print directly to UART (network commands, etc.).
 
 ## Constraints
 
@@ -90,3 +141,6 @@ Apps use the `.ogz.cpp` naming convention and follow a function-pointer interfac
 - QEMU user-mode networking: gateway 10.0.2.2, DHCP assigns 10.0.2.15, DNS at 10.0.2.3
 - App state limited to 4096 bytes per window instance; max 8 simultaneous windows
 - `syslog::init()` must be called after `fs::init()` to enable file logging
+- Virtio mouse driver uses 64 event buffers with queue size 128 — insufficient buffers cause delayed button release events (sticky drag)
+- `settings::save()` and `assoc::save()` call `fs::sync_to_disk()` internally — no separate sync needed
+- The Settings app has 6 tabs: Region, Display, Keyboard, Background, Files, Menu
