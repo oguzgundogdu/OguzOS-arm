@@ -423,7 +423,14 @@ void explorer_activate(Window &win) {
     win.selected = 0;
     win.scroll = 0;
   } else {
-    open_text_viewer(child->name, child->content);
+    // Check if this is a .ogz app binary — launch it
+    usize nlen = str::len(child->name);
+    if (nlen > 4 && str::cmp(child->name + nlen - 4, ".ogz") == 0 &&
+        apps::find(child->name)) {
+      open_app(child->name);
+    } else {
+      open_text_viewer(child->name, child->content);
+    }
   }
 }
 

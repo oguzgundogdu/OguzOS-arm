@@ -137,9 +137,11 @@ void init() {
   cwd_index = 0;
 
   // Create some default directories
+  mkdir("bin");
   mkdir("home");
   mkdir("etc");
   mkdir("tmp");
+  mkdir("var");
 
   // Create a welcome file
   cd("home");

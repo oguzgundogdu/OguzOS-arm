@@ -127,6 +127,28 @@ extern "C" void kernel_main() {
   apps::register_settings();
   syslog::info("kernel", "registered %d apps", apps::count());
 
+  // Populate /bin with app binaries (ensure /bin exists for disk-restored FS)
+  fs::cd("/");
+  if (fs::resolve("/bin") < 0)
+    fs::mkdir("bin");
+  fs::cd("/bin");
+  for (i32 i = 0; i < apps::count(); i++) {
+    const OgzApp *app = apps::get(i);
+    if (!app)
+      continue;
+    fs::touch(app->id);
+    char desc[256];
+    str::cpy(desc, "#!/ogz\n");
+    str::cat(desc, "name=");
+    str::cat(desc, app->name);
+    str::cat(desc, "\nid=");
+    str::cat(desc, app->id);
+    str::cat(desc, "\ntype=application\n");
+    fs::write(app->id, desc);
+  }
+  fs::cd("/");
+  syslog::info("kernel", "installed %d binaries in /bin", apps::count());
+
   // Print welcome banner
   print_banner();
 
