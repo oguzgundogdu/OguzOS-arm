@@ -1,6 +1,8 @@
 #include "app.h"
+#include "env.h"
 #include "fs.h"
 #include "graphics.h"
+#include "gui.h"
 #include "registry.h"
 #include "string.h"
 #include "syslog.h"
@@ -98,7 +100,11 @@ void term_exec(TermState *s) {
     term_append(s, "  touch <f> Create file\n");
     term_append(s, "  echo <t>  Print text\n");
     term_append(s, "  rm <f>    Remove file/dir\n");
+    term_append(s, "  env       Show environment\n");
+    term_append(s, "  export K=V  Set env variable\n");
+    term_append(s, "  unset K   Remove env variable\n");
     term_append(s, "  clear     Clear screen\n");
+    term_append(s, "  <app>     Run app from PATH\n");
     term_append(s, "  help      This message\n");
   } else if (str::cmp(p, "clear") == 0) {
     s->output[0] = '\0';
@@ -218,9 +224,56 @@ void term_exec(TermState *s) {
   } else if (str::cmp(p, "echo") == 0) {
     term_append(s, arg);
     term_append(s, "\n");
+  } else if (str::cmp(p, "env") == 0) {
+    for (i32 i = 0; i < env::count(); i++) {
+      const char *k = env::key_at(i);
+      const char *v = env::value_at(i);
+      if (k) {
+        term_append(s, k);
+        term_append(s, "=");
+        term_append(s, v);
+        term_append(s, "\n");
+      }
+    }
+  } else if (str::cmp(p, "export") == 0) {
+    if (*arg == '\0') {
+      term_append(s, "usage: export KEY=VALUE\n");
+    } else {
+      // Parse KEY=VALUE
+      char kv[200];
+      str::ncpy(kv, arg, 199);
+      char *eq = kv;
+      while (*eq && *eq != '=')
+        eq++;
+      if (*eq == '=') {
+        *eq = '\0';
+        env::set(kv, eq + 1);
+      } else {
+        term_append(s, "export: invalid format, use KEY=VALUE\n");
+      }
+    }
+  } else if (str::cmp(p, "unset") == 0) {
+    if (*arg == '\0') {
+      term_append(s, "usage: unset KEY\n");
+    } else {
+      if (!env::unset(arg)) {
+        term_append(s, "unset: not found: ");
+        term_append(s, arg);
+        term_append(s, "\n");
+      }
+    }
   } else {
-    term_append(s, p);
-    term_append(s, ": command not found\n");
+    // Try to resolve command from PATH
+    const char *app_id = env::resolve_command(p);
+    if (app_id && apps::find(app_id)) {
+      term_append(s, "Launching ");
+      term_append(s, app_id);
+      term_append(s, "...\n");
+      gui::open_app(app_id);
+    } else {
+      term_append(s, p);
+      term_append(s, ": command not found\n");
+    }
   }
 
   term_prompt(s);

@@ -256,30 +256,9 @@ void open_text_viewer(const char *title, const char *text) {
 
 void close_window(i32 idx); // forward declaration
 
-void open_app(const char *app_id) {
-  const OgzApp *app = apps::find(app_id);
-  if (!app) {
-    syslog::error("gui", "app not found: %s", app_id);
-    return;
-  }
-  syslog::info("gui", "opening app: %s", app->name);
-  i32 idx = create_window(app->name, 80, 30, app->default_w, app->default_h,
-                           WIN_APP);
-  if (idx < 0) {
-    syslog::error("gui", "failed to create window (max %d reached)", MAX_WINDOWS);
-    return;
-  }
-  windows[idx].app = const_cast<OgzApp *>(app);
-  str::memset(windows[idx].app_state, 0, sizeof(windows[idx].app_state));
-  if (try_enter() == 0) {
-    app->on_open(windows[idx].app_state);
-    try_leave();
-    syslog::info("gui", "app opened: %s (window %d)", app->name, idx);
-  } else {
-    syslog::error("gui", "app crashed during open: %s", app->name);
-    close_window(idx);
-  }
-}
+} // close anonymous namespace for gui::open_app forward declaration
+namespace gui { void open_app(const char *app_id); }
+namespace { // reopen anonymous namespace
 
 void close_window(i32 idx) {
   if (idx < 0 || idx >= window_count)
@@ -427,7 +406,7 @@ void explorer_activate(Window &win) {
     usize nlen = str::len(child->name);
     if (nlen > 4 && str::cmp(child->name + nlen - 4, ".ogz") == 0 &&
         apps::find(child->name)) {
-      open_app(child->name);
+      gui::open_app(child->name);
     } else {
       open_text_viewer(child->name, child->content);
     }
@@ -916,7 +895,7 @@ void handle_menu_click(i32 item) {
 
   // Check if it's an app launch
   if (menu_app_ids[item]) {
-    open_app(menu_app_ids[item]);
+    gui::open_app(menu_app_ids[item]);
     return;
   }
 
@@ -1224,6 +1203,31 @@ void handle_double_click(i32 x, i32 y) {
 
 // ── Public entry point ──────────────────────────────────────────────────────
 namespace gui {
+
+void open_app(const char *app_id) {
+  const OgzApp *app = apps::find(app_id);
+  if (!app) {
+    syslog::error("gui", "app not found: %s", app_id);
+    return;
+  }
+  syslog::info("gui", "opening app: %s", app->name);
+  i32 idx = create_window(app->name, 80, 30, app->default_w, app->default_h,
+                           WIN_APP);
+  if (idx < 0) {
+    syslog::error("gui", "failed to create window (max %d reached)", MAX_WINDOWS);
+    return;
+  }
+  windows[idx].app = const_cast<OgzApp *>(app);
+  str::memset(windows[idx].app_state, 0, sizeof(windows[idx].app_state));
+  if (try_enter() == 0) {
+    app->on_open(windows[idx].app_state);
+    try_leave();
+    syslog::info("gui", "app opened: %s (window %d)", app->name, idx);
+  } else {
+    syslog::error("gui", "app crashed during open: %s", app->name);
+    close_window(idx);
+  }
+}
 
 void run() {
   window_count = 0;

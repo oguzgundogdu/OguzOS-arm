@@ -19,6 +19,9 @@ constexpr i32 WTYPE_EXPLORER = 0;
 constexpr i32 WTYPE_TEXTVIEW = 1;
 constexpr i32 WTYPE_APP = 2;
 
+// Open a .ogz app by its id (e.g. "notepad.ogz")
+void open_app(const char *app_id);
+
 // Query open windows for task manager
 i32 get_window_count();
 const char *get_window_title(i32 index);

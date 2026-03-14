@@ -1,4 +1,5 @@
 #include "disk.h"
+#include "env.h"
 #include "fb.h"
 #include "fs.h"
 #include "gui.h"
@@ -116,6 +117,9 @@ extern "C" void kernel_main() {
 
   // Load saved settings from /etc/settings
   settings::load();
+
+  // Initialize environment variables
+  env::init();
 
   // Enable file logging now that fs is ready
   syslog::init();

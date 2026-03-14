@@ -1,9 +1,11 @@
 #include "shell.h"
 #include "disk.h"
+#include "env.h"
 #include "fb.h"
 #include "fs.h"
 #include "gui.h"
 #include "net.h"
+#include "registry.h"
 #include "string.h"
 #include "types.h"
 #include "uart.h"
@@ -99,10 +101,15 @@ void cmd_help() {
   uart::puts("  \033[1mdhcp\033[0m              Request IP via DHCP\n");
   uart::puts(
       "  \033[1mcurl\033[0m <url>        Fetch a URL via HTTP (GET)\n");
+  uart::puts("\n  \033[1;36m-- Environment --\033[0m\n");
+  uart::puts("  \033[1menv\033[0m               Show environment variables\n");
+  uart::puts("  \033[1mexport\033[0m KEY=VALUE  Set environment variable\n");
+  uart::puts("  \033[1munset\033[0m KEY         Remove environment variable\n");
   uart::puts("\n  \033[1;36m-- System --\033[0m\n");
   uart::puts("  \033[1mgui\033[0m               Launch graphical desktop\n");
   uart::puts("  \033[1mhalt\033[0m              Sync & halt the system\n");
   uart::puts("  \033[1mreboot\033[0m            Sync & reboot\n");
+  uart::puts("\n  Apps in \033[1mPATH\033[0m (/bin) can be launched by name.\n");
   uart::putc('\n');
 }
 
@@ -330,6 +337,48 @@ void cmd_gui() {
   uart::puts("Returned to shell.\n");
 }
 
+void cmd_env() {
+  for (i32 i = 0; i < env::count(); i++) {
+    const char *k = env::key_at(i);
+    const char *v = env::value_at(i);
+    if (k) {
+      uart::puts(k);
+      uart::putc('=');
+      uart::puts(v);
+      uart::putc('\n');
+    }
+  }
+}
+
+void cmd_export(usize argc, char *args[]) {
+  if (argc < 2) {
+    uart::puts("usage: export KEY=VALUE\n");
+    return;
+  }
+  // Parse KEY=VALUE
+  char *eq = args[1];
+  while (*eq && *eq != '=')
+    eq++;
+  if (*eq != '=') {
+    uart::puts("export: invalid format, use KEY=VALUE\n");
+    return;
+  }
+  *eq = '\0';
+  env::set(args[1], eq + 1);
+}
+
+void cmd_unset(usize argc, char *args[]) {
+  if (argc < 2) {
+    uart::puts("usage: unset KEY\n");
+    return;
+  }
+  if (!env::unset(args[1])) {
+    uart::puts("unset: not found: ");
+    uart::puts(args[1]);
+    uart::putc('\n');
+  }
+}
+
 void cmd_reboot() {
   if (disk::is_available()) {
     uart::puts("Syncing to disk... ");
@@ -406,10 +455,30 @@ void execute(char *input) {
     cmd_halt();
   else if (str::cmp(cmd, "reboot") == 0)
     cmd_reboot();
+  else if (str::cmp(cmd, "env") == 0)
+    cmd_env();
+  else if (str::cmp(cmd, "export") == 0)
+    cmd_export(argc, args);
+  else if (str::cmp(cmd, "unset") == 0)
+    cmd_unset(argc, args);
   else {
-    uart::puts("oguzos: command not found: ");
-    uart::puts(cmd);
-    uart::puts("\n");
+    // Try to resolve command from PATH (e.g. "notepad" -> "/bin/notepad.ogz")
+    const char *app_id = env::resolve_command(cmd);
+    if (app_id && apps::find(app_id)) {
+      if (fb::is_available()) {
+        uart::puts("Launching ");
+        uart::puts(app_id);
+        uart::puts("...\n");
+        gui::open_app(app_id);
+      } else {
+        uart::puts(cmd);
+        uart::puts(": GUI required (run with: make gui)\n");
+      }
+    } else {
+      uart::puts("oguzos: command not found: ");
+      uart::puts(cmd);
+      uart::puts("\n");
+    }
   }
 }
 
