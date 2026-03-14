@@ -42,7 +42,12 @@ struct Window {
   char title[64];
   bool visible;
   bool active;
+  bool minimized;
+  bool maximized;
   WinType type;
+
+  // Saved geometry for restore from maximize
+  i32 restore_x, restore_y, restore_w, restore_h;
 
   // Explorer state
   char path[256];
@@ -70,6 +75,17 @@ bool prev_mouse_left = false;
 bool dragging = false;
 i32 drag_win = -1;
 i32 drag_ox, drag_oy;
+
+// Resize state
+bool resizing = false;
+i32 resize_win = -1;
+i32 resize_edge = 0; // bitmask: 1=right, 2=bottom
+i32 resize_start_x, resize_start_y;
+i32 resize_orig_w, resize_orig_h;
+
+constexpr i32 RESIZE_GRIP = 6;  // edge detection zone width
+constexpr i32 MIN_WIN_W = 160;
+constexpr i32 MIN_WIN_H = 80;
 
 // Mouse-down tracking (for up-on-same-element detection)
 i32 mouse_down_x = -1, mouse_down_y = -1;
@@ -290,6 +306,49 @@ void bring_to_front(i32 idx) {
   windows[active_window].active = true;
 }
 
+void minimize_window(i32 idx) {
+  if (idx < 0 || idx >= window_count)
+    return;
+  windows[idx].minimized = true;
+  windows[idx].active = false;
+  // Activate next visible window
+  if (active_window == idx) {
+    active_window = -1;
+    for (i32 i = window_count - 1; i >= 0; i--) {
+      if (!windows[i].minimized) {
+        active_window = i;
+        windows[i].active = true;
+        break;
+      }
+    }
+  }
+}
+
+void toggle_maximize(i32 idx) {
+  if (idx < 0 || idx >= window_count)
+    return;
+  Window &win = windows[idx];
+  if (win.maximized) {
+    // Restore
+    win.x = win.restore_x;
+    win.y = win.restore_y;
+    win.w = win.restore_w;
+    win.h = win.restore_h;
+    win.maximized = false;
+  } else {
+    // Save and maximize
+    win.restore_x = win.x;
+    win.restore_y = win.y;
+    win.restore_w = win.w;
+    win.restore_h = win.h;
+    win.x = 0;
+    win.y = 0;
+    win.w = static_cast<i32>(fb::width());
+    win.h = static_cast<i32>(fb::height()) - TASKBAR_H;
+    win.maximized = true;
+  }
+}
+
 // ── Explorer helpers ────────────────────────────────────────────────────────
 i32 explorer_item_count(Window &win) {
   i32 dir_idx = fs::resolve(win.path);
@@ -377,13 +436,22 @@ void draw_taskbar() {
   // Window list on taskbar
   i32 tx = 68;
   for (i32 i = 0; i < window_count; i++) {
-    u32 bg = (i == active_window) ? 0x00556688 : 0x00444444;
+    u32 bg;
+    u32 fg = COL_TASK_TEXT;
+    if (i == active_window && !windows[i].minimized)
+      bg = 0x00556688;
+    else if (windows[i].minimized)
+      bg = 0x00383838; // dimmer for minimized
+    else
+      bg = 0x00444444;
+    if (windows[i].minimized)
+      fg = 0x00999999;
     gfx::fill_rect(tx, sh - TASKBAR_H + 3, 80, TASKBAR_H - 6, bg);
     // Truncate title to ~9 chars
     char short_title[12];
     str::ncpy(short_title, windows[i].title, 10);
     short_title[10] = '\0';
-    gfx::draw_text(tx + 4, sh - TASKBAR_H + 9, short_title, COL_TASK_TEXT, bg);
+    gfx::draw_text(tx + 4, sh - TASKBAR_H + 9, short_title, fg, bg);
     tx += 84;
   }
 
@@ -407,6 +475,11 @@ void draw_taskbar() {
   gfx::draw_text(sw - 48, sh - TASKBAR_H + 9, ts, COL_TASK_TEXT, COL_TASKBAR);
 }
 
+constexpr u32 COL_BTN_BG = 0x00555555;
+constexpr u32 COL_BTN_HOVER = 0x00777777;
+constexpr i32 BTN_SIZE = 14;
+constexpr i32 BTN_PAD = 2;
+
 void draw_window_frame(Window &win) {
   u32 title_col = win.active ? COL_WIN_TITLE : COL_WIN_INACTIVE;
 
@@ -420,15 +493,45 @@ void draw_window_frame(Window &win) {
   gfx::fill_rect(win.x, win.y, win.w, TITLEBAR_H, title_col);
   gfx::draw_text(win.x + 6, win.y + 6, win.title, COL_TEXT_LIGHT, title_col);
 
-  // Close button
-  i32 cbx = win.x + win.w - 18;
-  i32 cby = win.y + 3;
-  gfx::fill_rect(cbx, cby, 14, 14, COL_CLOSE_BTN);
-  gfx::draw_char(cbx + 3, cby + 3, 'X', COL_TEXT_LIGHT, COL_CLOSE_BTN);
+  i32 by = win.y + 3;
+
+  // Close button (rightmost)
+  i32 close_x = win.x + win.w - BTN_SIZE - BTN_PAD;
+  gfx::fill_rect(close_x, by, BTN_SIZE, BTN_SIZE, COL_CLOSE_BTN);
+  gfx::draw_char(close_x + 3, by + 3, 'X', COL_TEXT_LIGHT, COL_CLOSE_BTN);
+
+  // Maximize button
+  i32 max_x = close_x - BTN_SIZE - BTN_PAD;
+  gfx::fill_rect(max_x, by, BTN_SIZE, BTN_SIZE, COL_BTN_BG);
+  if (win.maximized) {
+    // Restore icon: two overlapping squares
+    gfx::rect(max_x + 4, by + 2, 7, 7, COL_TEXT_LIGHT);
+    gfx::rect(max_x + 2, by + 4, 7, 7, COL_TEXT_LIGHT);
+  } else {
+    // Maximize icon: single square
+    gfx::rect(max_x + 3, by + 3, 8, 8, COL_TEXT_LIGHT);
+  }
+
+  // Minimize button
+  i32 min_x = max_x - BTN_SIZE - BTN_PAD;
+  gfx::fill_rect(min_x, by, BTN_SIZE, BTN_SIZE, COL_BTN_BG);
+  // Underscore icon
+  gfx::hline(min_x + 3, by + 10, 8, COL_TEXT_LIGHT);
 
   // Window body
   gfx::fill_rect(win.x, win.y + TITLEBAR_H, win.w, win.h - TITLEBAR_H,
                   COL_WIN_BODY);
+
+  // Resize grip (bottom-right corner, only if not maximized)
+  if (!win.maximized) {
+    i32 gx = win.x + win.w - 2;
+    i32 gy = win.y + win.h - 2;
+    for (i32 d = 0; d < 3; d++) {
+      i32 off = d * 3 + 2;
+      for (i32 k = 0; k <= off && k < 10; k++)
+        gfx::pixel(gx - off + k, gy - k, 0x00888888);
+    }
+  }
 }
 
 void draw_explorer(Window &win) {
@@ -590,7 +693,7 @@ void draw_start_menu() {
 void render() {
   draw_desktop();
   for (i32 i = 0; i < window_count; i++) {
-    if (!windows[i].visible)
+    if (!windows[i].visible || windows[i].minimized)
       continue;
     switch (windows[i].type) {
     case WIN_EXPLORER:
@@ -662,7 +765,7 @@ void handle_menu_click(i32 item) {
   }
 }
 
-// Mouse-down: focus, drag start, selection (no destructive actions)
+// Mouse-down: focus, drag start, resize start, selection (no destructive actions)
 void handle_mouse_down(i32 x, i32 y) {
   i32 sh = static_cast<i32>(fb::height());
 
@@ -688,18 +791,57 @@ void handle_mouse_down(i32 x, i32 y) {
     if (!win.visible)
       continue;
 
+    if (win.minimized)
+      continue;
+
+    // Check resize edges (not when maximized)
+    if (!win.maximized) {
+      bool on_right = (x >= win.x + win.w - RESIZE_GRIP &&
+                       x <= win.x + win.w + 2 &&
+                       y >= win.y + TITLEBAR_H && y <= win.y + win.h + 2);
+      bool on_bottom = (x >= win.x &&
+                        x <= win.x + win.w + 2 &&
+                        y >= win.y + win.h - RESIZE_GRIP &&
+                        y <= win.y + win.h + 2);
+
+      if (on_right || on_bottom) {
+        bring_to_front(i);
+        resizing = true;
+        resize_win = window_count - 1;
+        resize_edge = (on_right ? 1 : 0) | (on_bottom ? 2 : 0);
+        resize_start_x = x;
+        resize_start_y = y;
+        resize_orig_w = windows[resize_win].w;
+        resize_orig_h = windows[resize_win].h;
+        return;
+      }
+    }
+
     if (x >= win.x && x < win.x + win.w && y >= win.y && y < win.y + win.h) {
-      // Close button — just highlight, action on release
-      i32 cbx = win.x + win.w - 18;
-      i32 cby = win.y + 3;
-      if (x >= cbx && x < cbx + 14 && y >= cby && y < cby + 14) {
+      // Title bar buttons area — just focus, action on release
+      i32 by = win.y + 3;
+      i32 btn_left_edge = win.x + win.w - (BTN_SIZE + BTN_PAD) * 3;
+      if (y >= by && y < by + BTN_SIZE && x >= btn_left_edge) {
         bring_to_front(i);
         return;
       }
 
-      // Title bar → start drag
+      // Title bar → start drag (auto-unmaximize if dragging a maximized window)
       if (y < win.y + TITLEBAR_H) {
         bring_to_front(i);
+        if (windows[window_count - 1].maximized) {
+          // Unmaximize and reposition so cursor stays on title bar
+          Window &mw = windows[window_count - 1];
+          i32 old_w = mw.restore_w;
+          toggle_maximize(window_count - 1);
+          // Center the restored window under the cursor
+          mw.x = x - old_w / 2;
+          mw.y = y - TITLEBAR_H / 2;
+          if (mw.x < 0)
+            mw.x = 0;
+          if (mw.y < 0)
+            mw.y = 0;
+        }
         dragging = true;
         drag_win = window_count - 1;
         drag_ox = x - windows[drag_win].x;
@@ -764,7 +906,16 @@ void handle_mouse_up(i32 x, i32 y) {
       i32 tx = 68;
       for (i32 i = 0; i < window_count; i++) {
         if (x >= tx && x < tx + 80) {
-          bring_to_front(i);
+          if (windows[i].minimized) {
+            // Restore from minimized
+            windows[i].minimized = false;
+            bring_to_front(i);
+          } else if (i == active_window) {
+            // Click active window on taskbar → minimize it
+            minimize_window(i);
+          } else {
+            bring_to_front(i);
+          }
           break;
         }
         tx += 84;
@@ -773,22 +924,48 @@ void handle_mouse_up(i32 x, i32 y) {
     return;
   }
 
-  // Window close button (release must be on the same close button)
+  // Window title bar buttons (release must match press location)
   for (i32 i = window_count - 1; i >= 0; i--) {
     Window &win = windows[i];
-    if (!win.visible)
+    if (!win.visible || win.minimized)
       continue;
 
     if (x >= win.x && x < win.x + win.w && y >= win.y && y < win.y + win.h) {
-      i32 cbx = win.x + win.w - 18;
-      i32 cby = win.y + 3;
-      if (x >= cbx && x < cbx + 14 && y >= cby && y < cby + 14) {
-        // Verify press was also on this close button area
-        if (mouse_down_x >= cbx && mouse_down_x < cbx + 14 &&
-            mouse_down_y >= cby && mouse_down_y < cby + 14) {
+      i32 by = win.y + 3;
+
+      // Close button (rightmost)
+      i32 close_x = win.x + win.w - BTN_SIZE - BTN_PAD;
+      if (x >= close_x && x < close_x + BTN_SIZE &&
+          y >= by && y < by + BTN_SIZE) {
+        if (mouse_down_x >= close_x && mouse_down_x < close_x + BTN_SIZE &&
+            mouse_down_y >= by && mouse_down_y < by + BTN_SIZE) {
           close_window(i);
         }
+        return;
       }
+
+      // Maximize button
+      i32 max_x = close_x - BTN_SIZE - BTN_PAD;
+      if (x >= max_x && x < max_x + BTN_SIZE &&
+          y >= by && y < by + BTN_SIZE) {
+        if (mouse_down_x >= max_x && mouse_down_x < max_x + BTN_SIZE &&
+            mouse_down_y >= by && mouse_down_y < by + BTN_SIZE) {
+          toggle_maximize(i);
+        }
+        return;
+      }
+
+      // Minimize button
+      i32 min_x = max_x - BTN_SIZE - BTN_PAD;
+      if (x >= min_x && x < min_x + BTN_SIZE &&
+          y >= by && y < by + BTN_SIZE) {
+        if (mouse_down_x >= min_x && mouse_down_x < min_x + BTN_SIZE &&
+            mouse_down_y >= by && mouse_down_y < by + BTN_SIZE) {
+          minimize_window(i);
+        }
+        return;
+      }
+
       return;
     }
   }
@@ -798,11 +975,22 @@ void handle_double_click(i32 x, i32 y) {
   if (active_window < 0)
     return;
   Window &win = windows[active_window];
-  if (win.type != WIN_EXPLORER)
+  if (win.minimized)
     return;
+
+  // Double-click title bar → toggle maximize
   if (x >= win.x && x < win.x + win.w &&
-      y >= win.y + TITLEBAR_H + 22 && y < win.y + win.h) {
-    explorer_activate(win);
+      y >= win.y && y < win.y + TITLEBAR_H) {
+    toggle_maximize(active_window);
+    return;
+  }
+
+  // Double-click explorer content → activate item
+  if (win.type == WIN_EXPLORER) {
+    if (x >= win.x && x < win.x + win.w &&
+        y >= win.y + TITLEBAR_H + 22 && y < win.y + win.h) {
+      explorer_activate(win);
+    }
   }
 }
 
@@ -817,6 +1005,7 @@ void run() {
   mouse_x = 320;
   mouse_y = 240;
   dragging = false;
+  resizing = false;
   prev_mouse_left = false;
   start_menu_open = false;
   start_menu_hover = -1;
@@ -854,15 +1043,37 @@ void run() {
       mouse_x = mx;
       mouse_y = my;
 
-      // Drag
+      // Drag (move)
       if (dragging && ml) {
         if (drag_win >= 0 && drag_win < window_count) {
           windows[drag_win].x = mouse_x - drag_ox;
           windows[drag_win].y = mouse_y - drag_oy;
           needs_redraw = true;
         }
-      } else {
+      } else if (!ml) {
         dragging = false;
+      }
+
+      // Resize
+      if (resizing && ml) {
+        if (resize_win >= 0 && resize_win < window_count) {
+          Window &rw = windows[resize_win];
+          if (resize_edge & 1) { // right
+            i32 new_w = resize_orig_w + (mouse_x - resize_start_x);
+            if (new_w < MIN_WIN_W)
+              new_w = MIN_WIN_W;
+            rw.w = new_w;
+          }
+          if (resize_edge & 2) { // bottom
+            i32 new_h = resize_orig_h + (mouse_y - resize_start_y);
+            if (new_h < MIN_WIN_H)
+              new_h = MIN_WIN_H;
+            rw.h = new_h;
+          }
+          needs_redraw = true;
+        }
+      } else if (!ml) {
+        resizing = false;
       }
 
       // Mouse-down edge: focus, drag start, selection
