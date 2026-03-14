@@ -22,6 +22,7 @@ void register_notepad();
 void register_terminal();
 void register_taskman();
 void register_settings();
+void register_browser();
 }
 
 namespace {
@@ -147,6 +148,7 @@ extern "C" void kernel_main() {
   apps::register_terminal();
   apps::register_taskman();
   apps::register_settings();
+  apps::register_browser();
   syslog::info("kernel", "registered %d apps", apps::count());
 
   // Populate /bin with app binaries (ensure /bin exists for disk-restored FS)

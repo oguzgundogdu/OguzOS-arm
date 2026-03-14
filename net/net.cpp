@@ -247,7 +247,7 @@ struct TcpConn {
 TcpConn tcp_conn;
 u16 tcp_ephemeral_port = 49152;
 
-constexpr u32 TCP_RECV_BUF_SIZE = 16384;
+constexpr u32 TCP_RECV_BUF_SIZE = 65536;
 u8 tcp_recv_buf[TCP_RECV_BUF_SIZE];
 u32 tcp_recv_len = 0;
 
@@ -1831,6 +1831,116 @@ void dhcp() {
 }
 
 void curl(const char *url) { do_curl(url); }
+
+u32 http_get_bin(const char *url, u8 *buf, u32 buf_size) {
+  if (!configured || !buf || buf_size == 0)
+    return 0;
+
+  ParsedUrl pu = parse_url(url);
+  if (!pu.valid)
+    return 0;
+
+  u32 dst_ip = parse_ip(pu.host);
+  if (dst_ip == 0) {
+    if (!dns_resolve_a(pu.host, &dst_ip))
+      return 0;
+  }
+
+  if (!tcp_connect(dst_ip, pu.port, 5000))
+    return 0;
+
+  // Send HTTP GET
+  char req[512];
+  req[0] = '\0';
+  str::cat(req, "GET ");
+  str::cat(req, pu.path);
+  str::cat(req, " HTTP/1.0\r\nHost: ");
+  str::cat(req, pu.host);
+  str::cat(req, "\r\nUser-Agent: OguzOS/1.0\r\nConnection: close\r\n\r\n");
+  tcp_send_data(req, static_cast<u32>(str::len(req)));
+
+  // Phase 1: Read headers
+  char hdr_buf[2048];
+  u32 hdr_len = 0;
+  bool headers_done = false;
+  u32 body_start = 0;
+
+  u64 t0 = get_ticks();
+  constexpr u32 TIMEOUT = 15000;
+
+  while (!headers_done) {
+    poll_one_packet();
+    if (tcp_recv_len > 0) {
+      t0 = get_ticks();
+      u32 copy = tcp_recv_len;
+      if (hdr_len + copy > sizeof(hdr_buf) - 1)
+        copy = sizeof(hdr_buf) - 1 - hdr_len;
+      if (copy > 0) {
+        str::memcpy(hdr_buf + hdr_len, tcp_recv_buf, copy);
+        hdr_len += copy;
+        hdr_buf[hdr_len] = '\0';
+      }
+      tcp_recv_len = 0;
+      for (u32 i = 0; i + 3 < hdr_len; i++) {
+        if (hdr_buf[i] == '\r' && hdr_buf[i + 1] == '\n' &&
+            hdr_buf[i + 2] == '\r' && hdr_buf[i + 3] == '\n') {
+          headers_done = true;
+          body_start = i + 4;
+          break;
+        }
+      }
+    }
+    if (tcp_conn.fin_received || tcp_conn.got_rst ||
+        tcp_conn.state == TCP_STATE_CLOSED ||
+        tcp_conn.state == TCP_STATE_CLOSING)
+      break;
+    if (elapsed_ms(t0, TIMEOUT))
+      break;
+    asm volatile("yield");
+  }
+
+  if (!headers_done) {
+    tcp_close();
+    return 0;
+  }
+
+  // Copy any body data already in header buffer
+  u32 written = 0;
+  if (body_start < hdr_len) {
+    u32 avail = hdr_len - body_start;
+    u32 copy = avail < buf_size ? avail : buf_size;
+    str::memcpy(buf, hdr_buf + body_start, copy);
+    written = copy;
+  }
+
+  // Phase 2: Read remaining body
+  if (!tcp_conn.fin_received && tcp_conn.state != TCP_STATE_CLOSED &&
+      tcp_conn.state != TCP_STATE_CLOSING) {
+    t0 = get_ticks();
+    while (written < buf_size) {
+      poll_one_packet();
+      if (tcp_recv_len > 0) {
+        t0 = get_ticks();
+        u32 copy = tcp_recv_len;
+        if (written + copy > buf_size)
+          copy = buf_size - written;
+        str::memcpy(buf + written, tcp_recv_buf, copy);
+        written += copy;
+        tcp_recv_len = 0;
+      }
+      if (tcp_conn.fin_received || tcp_conn.got_rst ||
+          tcp_conn.state == TCP_STATE_CLOSED ||
+          tcp_conn.state == TCP_STATE_CLOSING)
+        break;
+      if (elapsed_ms(t0, TIMEOUT))
+        break;
+      asm volatile("yield");
+    }
+  }
+
+  tcp_close();
+  return written;
+}
 
 bool ntp_sync() {
   if (!configured)

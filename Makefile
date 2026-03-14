@@ -67,6 +67,7 @@ OBJS = $(BUILD_DIR)/boot.o \
        $(BUILD_DIR)/terminal.o \
        $(BUILD_DIR)/taskman.o \
        $(BUILD_DIR)/settingsapp.o \
+       $(BUILD_DIR)/browser.o \
        $(BUILD_DIR)/settings.o \
        $(BUILD_DIR)/env.o \
        $(BUILD_DIR)/assoc.o \
@@ -155,6 +156,9 @@ $(BUILD_DIR)/taskman.o: $(APPS_DIR)/taskman.ogz.cpp | $(BUILD_DIR)
 $(BUILD_DIR)/settingsapp.o: $(APPS_DIR)/settings.ogz.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/browser.o: $(APPS_DIR)/browser.ogz.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/settings.o: $(LIB_DIR)/settings.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -192,7 +196,7 @@ run: $(KERNEL_BIN) $(DISK_IMG)
 	qemu-system-aarch64 \
 		-machine virt \
 		-cpu cortex-a72 \
-		-m 512M \
+		-m 1G \
 		-nographic \
 		-kernel $(KERNEL_BIN) \
 		-drive file=$(DISK_IMG),if=none,id=hd0,format=raw \
@@ -205,7 +209,7 @@ gui: $(KERNEL_BIN) $(DISK_IMG)
 	qemu-system-aarch64 \
 		-machine virt \
 		-cpu cortex-a72 \
-		-m 512M \
+		-m 1G \
 		-serial stdio \
 		-kernel $(KERNEL_BIN) \
 		-drive file=$(DISK_IMG),if=none,id=hd0,format=raw \
@@ -221,7 +225,7 @@ debug: $(KERNEL_BIN)
 	qemu-system-aarch64 \
 		-machine virt \
 		-cpu cortex-a72 \
-		-m 512M \
+		-m 1G \
 		-nographic \
 		-kernel $(KERNEL_BIN) \
 		-drive file=$(DISK_IMG),if=none,id=hd0,format=raw \

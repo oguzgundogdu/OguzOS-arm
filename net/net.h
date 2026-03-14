@@ -21,6 +21,10 @@ void ping(const char *target, u32 count);
 void dhcp();
 void curl(const char *url);
 
+// Fetch URL into binary buffer. Returns bytes written, 0 on failure.
+// Sends HTTP GET, skips headers, copies body into buf up to buf_size.
+u32 http_get_bin(const char *url, u8 *buf, u32 buf_size);
+
 // NTP time sync — returns true if time was set
 bool ntp_sync();
 

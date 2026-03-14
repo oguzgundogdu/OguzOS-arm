@@ -417,9 +417,9 @@ void whoami(OutFn out, void *ctx) {
 }
 
 void free_cmd(OutFn out, void *ctx) {
-  // Report RAM (fixed 512MB for QEMU virt)
+  // Report RAM (fixed 1GB for QEMU virt)
   out(ctx, "         total    used\n");
-  out(ctx, "Mem:     512 MB   (no MMU tracking)\n");
+  out(ctx, "Mem:     1024 MB  (no MMU tracking)\n");
   // FS node usage
   i32 used = 0;
   for (i32 i = 0; i < static_cast<i32>(fs::MAX_NODES); i++) {
