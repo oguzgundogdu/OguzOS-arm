@@ -105,6 +105,9 @@ void save() {
   str::cat(buf, "\n");
 
   fs::write("settings", buf);
+
+  // Persist filesystem to disk so settings survive reboot
+  fs::sync_to_disk();
   syslog::info("settings", "saved to /etc/settings");
 
   // Restore cwd
