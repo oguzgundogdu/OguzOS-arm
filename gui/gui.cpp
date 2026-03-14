@@ -8,6 +8,7 @@
 #include "mouse.h"
 #include "net.h"
 #include "registry.h"
+#include "settings.h"
 #include "string.h"
 #include "syslog.h"
 #include "types.h"
@@ -421,7 +422,7 @@ void explorer_activate(Window &win) {
 }
 
 // ── Drawing ─────────────────────────────────────────────────────────────────
-void draw_desktop() { gfx::clear(COL_DESKTOP); }
+void draw_desktop() { gfx::clear(settings::get_desktop_color()); }
 
 void draw_taskbar() {
   i32 sh = static_cast<i32>(fb::height());
@@ -460,14 +461,17 @@ void draw_taskbar() {
     tx += tab_w + 4;
   }
 
-  // Clock — real time from NTP, fallback to uptime
+  // Clock — real time from NTP + timezone offset, fallback to uptime
   u64 epoch = net::get_epoch();
   u64 hr, min;
   if (epoch > 0) {
-    // UTC wall clock
-    u64 day_secs = epoch % 86400;
-    hr = day_secs / 3600;
-    min = (day_secs / 60) % 60;
+    // Apply timezone offset (in minutes)
+    i32 tz_off = settings::get_tz_offset();
+    i64 local_secs = static_cast<i64>(epoch % 86400) + static_cast<i64>(tz_off) * 60;
+    while (local_secs < 0) local_secs += 86400;
+    while (local_secs >= 86400) local_secs -= 86400;
+    hr = static_cast<u64>(local_secs) / 3600;
+    min = (static_cast<u64>(local_secs) / 60) % 60;
   } else {
     // Fallback: uptime
     u64 cnt2, freq2;
@@ -1014,6 +1018,23 @@ void handle_mouse_up(i32 x, i32 y) {
           minimize_window(i);
         }
         return;
+      }
+
+      // Content area click → route to app
+      if (y >= win.y + TITLEBAR_H && y < win.y + win.h) {
+        if (win.type == WIN_APP && win.app && win.app->on_click) {
+          i32 rx = x - win.x;
+          i32 ry = y - (win.y + TITLEBAR_H);
+          i32 content_w = win.w;
+          i32 content_h = win.h - TITLEBAR_H;
+          if (try_enter() == 0) {
+            win.app->on_click(win.app_state, rx, ry, content_w, content_h);
+            try_leave();
+          } else {
+            syslog::error("gui", "app crashed on click: %s", win.app->name);
+            close_window(i);
+          }
+        }
       }
 
       return;

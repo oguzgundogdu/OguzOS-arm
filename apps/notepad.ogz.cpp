@@ -269,6 +269,7 @@ const OgzApp notepad_app = {
     notepad_key,     // on_key
     notepad_arrow,   // on_arrow
     notepad_close,   // on_close
+    nullptr,         // on_click
 };
 
 // Auto-register

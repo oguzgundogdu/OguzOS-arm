@@ -357,6 +357,7 @@ const OgzApp terminal_app = {
     terminal_key,      // on_key
     terminal_arrow,    // on_arrow
     terminal_close,    // on_close
+    nullptr,           // on_click
 };
 
 } // anonymous namespace

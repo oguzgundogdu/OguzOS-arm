@@ -401,6 +401,7 @@ const OgzApp taskman_app = {
     taskman_key,       // on_key
     taskman_arrow,     // on_arrow
     taskman_close,     // on_close
+    nullptr,           // on_click
 };
 
 } // anonymous namespace

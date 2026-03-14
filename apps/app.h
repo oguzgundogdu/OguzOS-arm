@@ -35,4 +35,9 @@ struct OgzApp {
 
   // Called when the app window is closed. Clean up here.
   void (*on_close)(u8 *app_state);
+
+  // Called when the user clicks inside the app content area.
+  // rx,ry = click position relative to content origin; cw,ch = content size.
+  // May be nullptr if the app doesn't handle mouse clicks.
+  void (*on_click)(u8 *app_state, i32 rx, i32 ry, i32 cw, i32 ch);
 };

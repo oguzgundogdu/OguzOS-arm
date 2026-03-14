@@ -17,6 +17,7 @@ namespace apps {
 void register_notepad();
 void register_terminal();
 void register_taskman();
+void register_settings();
 }
 
 namespace {
@@ -119,6 +120,7 @@ extern "C" void kernel_main() {
   apps::register_notepad();
   apps::register_terminal();
   apps::register_taskman();
+  apps::register_settings();
   syslog::info("kernel", "registered %d apps", apps::count());
 
   // Print welcome banner
