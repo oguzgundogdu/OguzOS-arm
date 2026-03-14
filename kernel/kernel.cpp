@@ -7,6 +7,7 @@
 #include "net.h"
 #include "netdev.h"
 #include "registry.h"
+#include "settings.h"
 #include "shell.h"
 #include "string.h"
 #include "syslog.h"
@@ -112,6 +113,9 @@ extern "C" void kernel_main() {
     fs::init();
     syslog::info("kernel", "filesystem initialized (default)");
   }
+
+  // Load saved settings from /etc/settings
+  settings::load();
 
   // Enable file logging now that fs is ready
   syslog::init();

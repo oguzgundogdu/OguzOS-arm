@@ -21,4 +21,8 @@ u32 get_desktop_color();
 void set_kbd_layout(i32 index);
 i32 get_kbd_layout();
 
+// Persist settings to /etc/settings and load them back
+void save();
+void load();
+
 } // namespace settings

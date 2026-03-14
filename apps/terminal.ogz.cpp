@@ -358,6 +358,9 @@ const OgzApp terminal_app = {
     terminal_arrow,    // on_arrow
     terminal_close,    // on_close
     nullptr,           // on_click
+    nullptr,           // on_scroll
+    nullptr,           // on_mouse_down
+    nullptr,           // on_mouse_move
 };
 
 } // anonymous namespace

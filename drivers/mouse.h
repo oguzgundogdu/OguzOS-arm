@@ -16,7 +16,8 @@ bool init();
 bool is_available();
 
 // Poll for mouse events. Updates position and button state.
+// scroll: accumulated scroll wheel delta since last poll (positive = up).
 // Returns true if any new events were processed.
-bool poll(i32 &x, i32 &y, bool &left, bool &right);
+bool poll(i32 &x, i32 &y, bool &left, bool &right, i32 &scroll);
 
 } // namespace mouse

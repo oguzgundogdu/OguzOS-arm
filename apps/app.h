@@ -40,4 +40,17 @@ struct OgzApp {
   // rx,ry = click position relative to content origin; cw,ch = content size.
   // May be nullptr if the app doesn't handle mouse clicks.
   void (*on_click)(u8 *app_state, i32 rx, i32 ry, i32 cw, i32 ch);
+
+  // Called when the scroll wheel is used over the app content area.
+  // delta: positive = scroll up, negative = scroll down.
+  // May be nullptr if the app doesn't handle scroll.
+  void (*on_scroll)(u8 *app_state, i32 delta);
+
+  // Called when the mouse is pressed in the content area (before on_click).
+  // May be nullptr.
+  void (*on_mouse_down)(u8 *app_state, i32 rx, i32 ry, i32 cw, i32 ch);
+
+  // Called when the mouse moves while held in the content area (drag).
+  // May be nullptr.
+  void (*on_mouse_move)(u8 *app_state, i32 rx, i32 ry, i32 cw, i32 ch);
 };

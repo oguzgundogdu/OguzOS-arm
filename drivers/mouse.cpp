@@ -45,6 +45,7 @@ struct VirtioInputEvent {
 
 // Linux input event types
 constexpr u16 EV_KEY = 0x01;
+constexpr u16 EV_REL = 0x02;
 constexpr u16 EV_ABS = 0x03;
 
 // Button codes
@@ -54,6 +55,9 @@ constexpr u16 BTN_RIGHT = 0x111;
 // Absolute axis codes
 constexpr u16 ABS_X = 0x00;
 constexpr u16 ABS_Y = 0x01;
+
+// Relative axis codes (scroll wheel)
+constexpr u16 REL_WHEEL = 0x08;
 
 // Virtqueue structures
 struct VirtqDesc {
@@ -106,6 +110,7 @@ i32 cur_x = 320;
 i32 cur_y = 240;
 bool btn_left = false;
 bool btn_right = false;
+i32 scroll_accum = 0; // accumulated scroll delta since last poll
 
 volatile u32 &mmio(u32 offset) {
   return *reinterpret_cast<volatile u32 *>(base_addr + offset);
@@ -284,12 +289,14 @@ bool init() {
 
 bool is_available() { return initialized; }
 
-bool poll(i32 &out_x, i32 &out_y, bool &out_left, bool &out_right) {
+bool poll(i32 &out_x, i32 &out_y, bool &out_left, bool &out_right,
+          i32 &out_scroll) {
   if (!initialized) {
     out_x = cur_x;
     out_y = cur_y;
     out_left = false;
     out_right = false;
+    out_scroll = 0;
     return false;
   }
 
@@ -322,6 +329,9 @@ bool poll(i32 &out_x, i32 &out_y, bool &out_left, bool &out_right) {
         if (cur_y >= static_cast<i32>(sh))
           cur_y = static_cast<i32>(sh) - 1;
       }
+    } else if (evt.type == EV_REL) {
+      if (evt.code == REL_WHEEL)
+        scroll_accum += static_cast<i32>(evt.value);
     } else if (evt.type == EV_KEY) {
       if (evt.code == BTN_LEFT)
         btn_left = (evt.value != 0);
@@ -353,6 +363,8 @@ bool poll(i32 &out_x, i32 &out_y, bool &out_left, bool &out_right) {
   out_y = cur_y;
   out_left = btn_left;
   out_right = btn_right;
+  out_scroll = scroll_accum;
+  scroll_accum = 0;
 
   return got_event;
 }

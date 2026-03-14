@@ -259,6 +259,12 @@ void notepad_arrow(u8 *state, char dir) {
 
 void notepad_close(u8 *) {}
 
+void notepad_scroll(u8 *state, i32 delta) {
+  auto *s = reinterpret_cast<NotepadState *>(state);
+  s->scroll_y -= delta * 3;
+  if (s->scroll_y < 0) s->scroll_y = 0;
+}
+
 const OgzApp notepad_app = {
     "Notepad",       // name
     "notepad.ogz",   // id
@@ -270,6 +276,9 @@ const OgzApp notepad_app = {
     notepad_arrow,   // on_arrow
     notepad_close,   // on_close
     nullptr,         // on_click
+    notepad_scroll,  // on_scroll
+    nullptr,         // on_mouse_down
+    nullptr,         // on_mouse_move
 };
 
 // Auto-register

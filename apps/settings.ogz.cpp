@@ -228,15 +228,21 @@ void draw_region(SettingsState *s, i32 cx, i32 cy, i32 cw, i32 ch) {
   }
 
   // Scrollbar
+  constexpr i32 SB_W = 12;
   if (TZ_COUNT > visible) {
-    i32 sb_x = cx + cw - 6;
+    i32 sb_x = x + w - SB_W;
     i32 sb_h = list_h;
     i32 thumb_h = (visible * sb_h) / TZ_COUNT;
-    if (thumb_h < 10)
-      thumb_h = 10;
-    i32 thumb_y = y + (s->tz_scroll * (sb_h - thumb_h)) / (TZ_COUNT - visible);
-    gfx::fill_rect(sb_x, y, 4, sb_h, 0x00303040);
-    gfx::fill_rect(sb_x, thumb_y, 4, thumb_h, 0x00606080);
+    if (thumb_h < 20)
+      thumb_h = 20;
+    i32 max_sc = TZ_COUNT - visible;
+    i32 travel = sb_h - thumb_h;
+    i32 thumb_y = y;
+    if (max_sc > 0 && travel > 0)
+      thumb_y = y + (s->tz_scroll * travel) / max_sc;
+    gfx::fill_rect(sb_x, y, SB_W, sb_h, 0x00303040);
+    gfx::fill_rect(sb_x + 1, thumb_y, SB_W - 2, thumb_h, 0x00707090);
+    gfx::rect(sb_x + 1, thumb_y, SB_W - 2, thumb_h, 0x00909090);
   }
 }
 
@@ -473,6 +479,7 @@ void apply_current(SettingsState *s) {
     }
     break;
   }
+  settings::save();
 }
 
 bool settings_key(u8 *state, char key) {
@@ -532,7 +539,7 @@ void settings_arrow(u8 *state, char dir) {
   }
 }
 
-void settings_click(u8 *state, i32 rx, i32 ry, i32 cw, i32 /*ch*/) {
+void settings_click(u8 *state, i32 rx, i32 ry, i32 cw, i32 ch) {
   auto *s = reinterpret_cast<SettingsState *>(state);
 
   CHAR_W = gfx::font_w();
@@ -558,13 +565,33 @@ void settings_click(u8 *state, i32 rx, i32 ry, i32 cw, i32 /*ch*/) {
   case 0: {
     // Region: click on timezone list
     i32 list_y = PAD + LINE_H + 4; // relative to content area
+    i32 list_w = cw - PAD * 2;
+    i32 list_h = ch - TAB_H - 2 - PAD - (LINE_H + 4) - PAD;
     i32 local_y = content_ry - list_y;
+    i32 visible = list_h / LINE_H;
+    if (visible < 1) visible = 1;
+    i32 max_sc = TZ_COUNT - visible;
+    if (max_sc < 0) max_sc = 0;
+
+    // Check if click is on the scrollbar area (right SB_W pixels)
+    constexpr i32 SB_W_CLICK = 12;
+    if (rx >= PAD + list_w - SB_W_CLICK && local_y >= 0 && TZ_COUNT > visible) {
+      // Jump scroll position proportionally to click Y in track
+      if (list_h > 0) {
+        i32 new_scroll = (local_y * max_sc) / list_h;
+        if (new_scroll < 0) new_scroll = 0;
+        if (new_scroll > max_sc) new_scroll = max_sc;
+        s->tz_scroll = new_scroll;
+      }
+      break;
+    }
+
     if (local_y >= 0) {
       i32 clicked = local_y / LINE_H + s->tz_scroll;
       if (clicked >= 0 && clicked < TZ_COUNT) {
         s->tz_sel = clicked;
-        // Apply immediately on click
         settings::set_tz_offset(timezones[s->tz_sel].offset);
+        settings::save();
         syslog::info("settings", "timezone set to %s (%s)",
                       timezones[s->tz_sel].label, timezones[s->tz_sel].city);
       }
@@ -580,6 +607,7 @@ void settings_click(u8 *state, i32 rx, i32 ry, i32 cw, i32 /*ch*/) {
       if (clicked >= 0 && clicked < KB_COUNT) {
         s->kb_sel = clicked;
         settings::set_kbd_layout(s->kb_sel);
+        settings::save();
         syslog::info("settings", "keyboard layout set to %s",
                       kb_layouts[s->kb_sel]);
       }
@@ -614,6 +642,7 @@ void settings_click(u8 *state, i32 rx, i32 ry, i32 cw, i32 /*ch*/) {
         if (idx >= 0 && idx < BG_COUNT) {
           s->bg_sel = idx;
           settings::set_desktop_color(bg_presets[idx].color);
+          settings::save();
           syslog::info("settings", "desktop color set to %s",
                         bg_presets[idx].name);
         }
@@ -621,6 +650,77 @@ void settings_click(u8 *state, i32 rx, i32 ry, i32 cw, i32 /*ch*/) {
     }
     break;
   }
+  }
+}
+
+void settings_mouse_down(u8 *state, i32 rx, i32 ry, i32 cw, i32 ch) {
+  auto *s = reinterpret_cast<SettingsState *>(state);
+
+  CHAR_W = gfx::font_w();
+  LINE_H = gfx::font_h() + 2;
+
+  if (s->tab != 0) return; // only Region has a scrollbar
+
+  i32 content_y = TAB_H + 2;
+  i32 content_ry = ry - content_y;
+  i32 list_y = PAD + LINE_H + 4;
+  i32 list_w = cw - PAD * 2;
+  i32 list_h = ch - content_y - PAD - list_y - PAD;
+  i32 local_y = content_ry - list_y;
+
+  constexpr i32 SB_W_HIT = 12;
+  if (rx >= PAD + list_w - SB_W_HIT && local_y >= 0 && list_h > 0) {
+    i32 visible = list_h / LINE_H;
+    if (visible < 1) visible = 1;
+    i32 max_sc = TZ_COUNT - visible;
+    if (max_sc > 0) {
+      // Store drag start info in unused high bits of tz_scroll
+      // Actually, just compute position directly - we'll track via mouse_move
+      i32 new_scroll = (local_y * max_sc) / list_h;
+      if (new_scroll < 0) new_scroll = 0;
+      if (new_scroll > max_sc) new_scroll = max_sc;
+      s->tz_scroll = new_scroll;
+    }
+  }
+}
+
+void settings_mouse_move(u8 *state, i32 /*rx*/, i32 ry, i32 /*cw*/, i32 ch) {
+  auto *s = reinterpret_cast<SettingsState *>(state);
+
+  CHAR_W = gfx::font_w();
+  LINE_H = gfx::font_h() + 2;
+
+  if (s->tab != 0) return;
+
+  i32 content_y = TAB_H + 2;
+  i32 content_ry = ry - content_y;
+  i32 list_y = PAD + LINE_H + 4;
+  i32 list_h = ch - content_y - PAD - list_y - PAD;
+  i32 local_y = content_ry - list_y;
+
+  // During drag, update scroll proportionally to mouse Y in the list area
+  if (list_h > 0) {
+    i32 visible = list_h / LINE_H;
+    if (visible < 1) visible = 1;
+    i32 max_sc = TZ_COUNT - visible;
+    if (max_sc > 0) {
+      i32 new_scroll = (local_y * max_sc) / list_h;
+      if (new_scroll < 0) new_scroll = 0;
+      if (new_scroll > max_sc) new_scroll = max_sc;
+      s->tz_scroll = new_scroll;
+    }
+  }
+}
+
+void settings_scroll(u8 *state, i32 delta) {
+  auto *s = reinterpret_cast<SettingsState *>(state);
+
+  if (s->tab == 0) {
+    // Region tab: scroll timezone list
+    s->tz_scroll -= delta * 3;
+    if (s->tz_scroll < 0) s->tz_scroll = 0;
+    i32 max_sc = TZ_COUNT - 1; // will be clamped in draw
+    if (s->tz_scroll > max_sc) s->tz_scroll = max_sc;
   }
 }
 
@@ -638,7 +738,10 @@ const OgzApp settings_app = {
     settings_key,      // on_key
     settings_arrow,    // on_arrow
     settings_close,    // on_close
-    settings_click,    // on_click
+    settings_click,      // on_click
+    settings_scroll,     // on_scroll
+    settings_mouse_down, // on_mouse_down
+    settings_mouse_move, // on_mouse_move
 };
 
 } // anonymous namespace

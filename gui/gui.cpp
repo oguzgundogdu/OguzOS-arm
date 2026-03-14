@@ -92,6 +92,12 @@ constexpr i32 MIN_WIN_H = 80;
 // Mouse-down tracking (for up-on-same-element detection)
 i32 mouse_down_x = -1, mouse_down_y = -1;
 
+// Scrollbar drag state
+bool scrollbar_dragging = false;
+i32 scrollbar_drag_win = -1;
+i32 scrollbar_drag_start_y = 0;
+i32 scrollbar_drag_start_scroll = 0;
+
 // Start menu state
 bool start_menu_open = false;
 i32 start_menu_hover = -1;
@@ -566,6 +572,92 @@ void draw_window_frame(Window &win) {
   }
 }
 
+// Count total lines in text (for scrollbar)
+i32 count_text_lines(const char *text, i32 cw, i32 fw) {
+  i32 lines = 1;
+  i32 tx = 0;
+  for (const char *p = text; *p; p++) {
+    if (*p == '\n') {
+      lines++;
+      tx = 0;
+    } else {
+      tx += fw;
+      if (tx > cw) { lines++; tx = fw; }
+    }
+  }
+  return lines;
+}
+
+// Scrollbar geometry for a window (used by drawing, hit-testing, and dragging)
+constexpr i32 SB_WIDTH = 12;
+
+struct ScrollGeom {
+  i32 sb_x;       // scrollbar track left x (screen coords)
+  i32 sb_y;       // scrollbar track top y (screen coords)
+  i32 track_h;    // scrollbar track height
+  i32 thumb_h;    // thumb height
+  i32 thumb_y;    // thumb top y (screen coords)
+  i32 max_scroll; // max scroll value
+  bool visible;   // whether scrollbar is needed
+};
+
+ScrollGeom get_scroll_geom(Window &win) {
+  ScrollGeom g{};
+  i32 fh = gfx::font_h();
+
+  i32 total_items = 0;
+  i32 visible_items = 0;
+
+  if (win.type == WIN_EXPLORER) {
+    i32 pad = 6;
+    i32 path_h = fh + 6;
+    i32 ITEM_H = fh + 6;
+    i32 ch = win.h - TITLEBAR_H - pad * 2 - path_h - 4;
+    visible_items = ch / ITEM_H;
+    if (visible_items < 1) visible_items = 1;
+    total_items = explorer_item_count(win);
+    g.sb_x = win.x + pad + (win.w - pad * 2) - SB_WIDTH;
+    g.sb_y = win.y + TITLEBAR_H + pad + path_h + 4;
+    g.track_h = ch;
+  } else if (win.type == WIN_TEXTVIEW) {
+    i32 fw = gfx::font_w();
+    i32 LINE_H = fh + 2;
+    i32 cw = win.w - 16;
+    i32 ch = win.h - TITLEBAR_H - 16;
+    visible_items = ch / LINE_H;
+    if (visible_items < 1) visible_items = 1;
+    total_items = count_text_lines(win.view_text, cw, fw);
+    g.sb_x = win.x + 8 + cw - SB_WIDTH;
+    g.sb_y = win.y + TITLEBAR_H + 8;
+    g.track_h = ch;
+  } else {
+    return g;
+  }
+
+  g.max_scroll = total_items - visible_items;
+  if (g.max_scroll < 0) g.max_scroll = 0;
+  g.visible = (total_items > visible_items);
+
+  if (g.visible && g.track_h > 0) {
+    g.thumb_h = (visible_items * g.track_h) / total_items;
+    if (g.thumb_h < 20) g.thumb_h = 20;
+    i32 travel = g.track_h - g.thumb_h;
+    g.thumb_y = g.sb_y;
+    if (g.max_scroll > 0 && travel > 0)
+      g.thumb_y = g.sb_y + (win.scroll * travel) / g.max_scroll;
+  }
+
+  return g;
+}
+
+// Scroll a window by delta lines (positive = scroll down)
+void scroll_window(Window &win, i32 delta) {
+  ScrollGeom g = get_scroll_geom(win);
+  win.scroll += delta;
+  if (win.scroll < 0) win.scroll = 0;
+  if (win.scroll > g.max_scroll) win.scroll = g.max_scroll;
+}
+
 void draw_explorer(Window &win) {
   draw_window_frame(win);
 
@@ -599,89 +691,123 @@ void draw_explorer(Window &win) {
   if (icon_sz < 8) icon_sz = 8;
   i32 icon_pad = (ITEM_H - icon_sz) / 2;
   i32 text_pad = (ITEM_H - fh) / 2;
-  i32 text_x = cx + icon_sz + 12;
-  i32 item_y = cy;
-  i32 item_idx = 0;
   bool has_dotdot = (dir_idx != 0);
 
-  // ".." entry
-  if (has_dotdot) {
-    bool sel = (win.selected == item_idx);
-    u32 bg = sel ? COL_SELECTION : COL_WIN_BODY;
-    u32 fg = sel ? COL_TEXT_LIGHT : COL_TEXT_DARK;
-    if (sel)
-      gfx::fill_rect(cx, item_y, cw, ITEM_H, COL_SELECTION);
-    gfx::fill_rect(cx + 4, item_y + icon_pad, icon_sz, icon_sz, COL_FOLDER);
-    gfx::draw_text(text_x, item_y + text_pad, "..", fg, bg);
-    item_y += ITEM_H;
-    item_idx++;
+  // Total item count
+  i32 total_items = static_cast<i32>(dir->child_count);
+  if (has_dotdot) total_items++;
+
+  i32 visible_items = ch / ITEM_H;
+  if (visible_items < 1) visible_items = 1;
+
+  // Use shared scroll geometry
+  ScrollGeom sg = get_scroll_geom(win);
+  if (win.scroll > sg.max_scroll) win.scroll = sg.max_scroll;
+  if (win.scroll < 0) win.scroll = 0;
+
+  i32 content_w = sg.visible ? (cw - SB_WIDTH - 2) : cw;
+  i32 text_x = cx + icon_sz + 12;
+
+  if (sg.visible) {
+    // Scrollbar track
+    gfx::fill_rect(sg.sb_x, sg.sb_y, SB_WIDTH, sg.track_h, 0x00DDDDDD);
+    // Scrollbar thumb
+    gfx::fill_rect(sg.sb_x + 1, sg.thumb_y, SB_WIDTH - 2, sg.thumb_h, COL_SCROLLBAR);
+    gfx::rect(sg.sb_x + 1, sg.thumb_y, SB_WIDTH - 2, sg.thumb_h, 0x00AAAAAA);
   }
 
-  // Children
-  for (usize i = 0; i < dir->child_count; i++) {
+  // Draw items starting from win.scroll
+  i32 item_y = cy;
+  for (i32 item_idx = win.scroll; item_idx < total_items; item_idx++) {
     if (item_y + ITEM_H > cy + ch)
       break;
 
-    i32 ci = dir->children[i];
-    if (ci < 0)
-      continue;
-    const fs::Node *child = fs::get_node(ci);
-    if (!child || !child->used)
-      continue;
-
     bool sel = (win.selected == item_idx);
     u32 bg = sel ? COL_SELECTION : COL_WIN_BODY;
     u32 fg = sel ? COL_TEXT_LIGHT : COL_TEXT_DARK;
 
     if (sel)
-      gfx::fill_rect(cx, item_y, cw, ITEM_H, COL_SELECTION);
+      gfx::fill_rect(cx, item_y, content_w, ITEM_H, COL_SELECTION);
 
-    // Icon
-    u32 icon_col =
-        (child->type == fs::NodeType::Directory) ? COL_FOLDER : COL_FILE_ICON;
-    gfx::fill_rect(cx + 4, item_y + icon_pad, icon_sz, icon_sz, icon_col);
-
-    // Name
-    gfx::draw_text(text_x, item_y + text_pad, child->name, fg, bg);
-
-    // Size for files
-    if (child->type == fs::NodeType::File) {
-      char sz[16];
-      int_to_str(static_cast<i64>(child->content_len), sz);
-      str::cat(sz, "B");
-      gfx::draw_text(cx + cw - fw * 6, item_y + text_pad, sz, fg, bg);
+    if (has_dotdot && item_idx == 0) {
+      // ".." entry
+      gfx::fill_rect(cx + 4, item_y + icon_pad, icon_sz, icon_sz, COL_FOLDER);
+      gfx::draw_text(text_x, item_y + text_pad, "..", fg, bg);
+    } else {
+      i32 child_sel = has_dotdot ? (item_idx - 1) : item_idx;
+      if (child_sel >= 0 && child_sel < static_cast<i32>(dir->child_count)) {
+        i32 ci = dir->children[child_sel];
+        const fs::Node *child = (ci >= 0) ? fs::get_node(ci) : nullptr;
+        if (child && child->used) {
+          // Icon
+          u32 icon_col = (child->type == fs::NodeType::Directory) ? COL_FOLDER : COL_FILE_ICON;
+          gfx::fill_rect(cx + 4, item_y + icon_pad, icon_sz, icon_sz, icon_col);
+          // Name
+          gfx::draw_text(text_x, item_y + text_pad, child->name, fg, bg);
+          // Size for files
+          if (child->type == fs::NodeType::File) {
+            char sz[16];
+            int_to_str(static_cast<i64>(child->content_len), sz);
+            str::cat(sz, "B");
+            gfx::draw_text(cx + content_w - fw * 6, item_y + text_pad, sz, fg, bg);
+          }
+        }
+      }
     }
 
     item_y += ITEM_H;
-    item_idx++;
   }
 }
 
 void draw_text_viewer(Window &win) {
   draw_window_frame(win);
 
+  i32 fw = gfx::font_w();
+  i32 fh = gfx::font_h();
+  i32 LINE_H = fh + 2;
+
   i32 cx = win.x + 8;
   i32 cy = win.y + TITLEBAR_H + 8;
   i32 cw = win.w - 16;
-  i32 max_y = win.y + win.h - 8;
+  i32 ch = win.h - TITLEBAR_H - 16;
 
+  // Use shared scroll geometry
+  ScrollGeom sg = get_scroll_geom(win);
+  if (win.scroll > sg.max_scroll) win.scroll = sg.max_scroll;
+  if (win.scroll < 0) win.scroll = 0;
+
+  i32 visible_lines = ch / LINE_H;
+  if (visible_lines < 1) visible_lines = 1;
+
+  i32 text_w = sg.visible ? (cw - SB_WIDTH - 2) : cw;
+
+  if (sg.visible) {
+    gfx::fill_rect(sg.sb_x, sg.sb_y, SB_WIDTH, sg.track_h, 0x00DDDDDD);
+    gfx::fill_rect(sg.sb_x + 1, sg.thumb_y, SB_WIDTH - 2, sg.thumb_h, COL_SCROLLBAR);
+    gfx::rect(sg.sb_x + 1, sg.thumb_y, SB_WIDTH - 2, sg.thumb_h, 0x00AAAAAA);
+  }
+
+  // Render text with scroll offset
   const char *p = win.view_text;
+  i32 line = 0;
   i32 tx = cx;
   i32 ty = cy;
 
-  i32 fw = gfx::font_w();
-  i32 fh = gfx::font_h();
-
-  while (*p && ty + fh <= max_y) {
+  while (*p) {
     if (*p == '\n') {
-      ty += fh + 2;
+      line++;
       tx = cx;
+      if (line > win.scroll)
+        ty += LINE_H;
     } else {
-      if (tx + fw <= cx + cw) {
-        gfx::draw_char(tx, ty, *p, COL_TEXT_DARK, COL_WIN_BODY);
-        tx += fw;
+      if (line >= win.scroll && line < win.scroll + visible_lines) {
+        if (tx + fw <= cx + text_w) {
+          gfx::draw_char(tx, ty, *p, COL_TEXT_DARK, COL_WIN_BODY);
+        }
       }
+      tx += fw;
     }
+    if (ty > cy + ch) break;
     p++;
   }
 }
@@ -902,6 +1028,18 @@ void handle_mouse_down(i32 x, i32 y) {
       bring_to_front(i);
       Window &w = windows[window_count - 1];
 
+      // Check for scrollbar click
+      ScrollGeom sg = get_scroll_geom(w);
+      if (sg.visible &&
+          x >= sg.sb_x && x < sg.sb_x + SB_WIDTH &&
+          y >= sg.sb_y && y < sg.sb_y + sg.track_h) {
+        scrollbar_dragging = true;
+        scrollbar_drag_win = window_count - 1;
+        scrollbar_drag_start_y = y;
+        scrollbar_drag_start_scroll = w.scroll;
+        return;
+      }
+
       if (w.type == WIN_EXPLORER) {
         i32 exp_pad = 6;
         i32 exp_path_h = gfx::font_h() + 6;
@@ -909,10 +1047,17 @@ void handle_mouse_down(i32 x, i32 y) {
         i32 list_top = w.y + TITLEBAR_H + exp_pad + exp_path_h + 4;
         i32 local_y = y - list_top;
         if (local_y >= 0) {
-          i32 clicked_item = local_y / exp_item_h;
+          i32 clicked_item = w.scroll + local_y / exp_item_h;
           i32 total = explorer_item_count(w);
           if (clicked_item >= 0 && clicked_item < total)
             w.selected = clicked_item;
+        }
+      } else if (w.type == WIN_APP && w.app && w.app->on_mouse_down) {
+        i32 rx = x - w.x;
+        i32 ry = y - (w.y + TITLEBAR_H);
+        if (try_enter() == 0) {
+          w.app->on_mouse_down(w.app_state, rx, ry, w.w, w.h - TITLEBAR_H);
+          try_leave();
         }
       }
       return;
@@ -1080,6 +1225,7 @@ void run() {
   mouse_y = 240;
   dragging = false;
   resizing = false;
+  scrollbar_dragging = false;
   prev_mouse_left = false;
   start_menu_open = false;
   start_menu_hover = -1;
@@ -1095,9 +1241,9 @@ void run() {
 
   while (true) {
     // ── Mouse input ───────────────────────────────────────────────────
-    i32 mx, my;
+    i32 mx, my, mscroll;
     bool ml, mr;
-    if (mouse::poll(mx, my, ml, mr)) {
+    if (mouse::poll(mx, my, ml, mr, mscroll)) {
       if (mx != mouse_x || my != mouse_y) {
         needs_redraw = true;
 
@@ -1184,6 +1330,68 @@ void run() {
         needs_redraw = true;
       }
 
+      // Scrollbar drag
+      if (scrollbar_dragging && ml) {
+        if (scrollbar_drag_win >= 0 && scrollbar_drag_win < window_count) {
+          Window &sw = windows[scrollbar_drag_win];
+          ScrollGeom sg = get_scroll_geom(sw);
+          i32 travel = sg.track_h - sg.thumb_h;
+          if (sg.visible && travel > 0 && sg.max_scroll > 0) {
+            i32 dy = mouse_y - scrollbar_drag_start_y;
+            i32 new_scroll = scrollbar_drag_start_scroll +
+                             (dy * sg.max_scroll) / travel;
+            if (new_scroll < 0) new_scroll = 0;
+            if (new_scroll > sg.max_scroll) new_scroll = sg.max_scroll;
+            sw.scroll = new_scroll;
+            needs_redraw = true;
+          }
+        }
+      } else if (!ml) {
+        scrollbar_dragging = false;
+      }
+
+      // App mouse-move (drag) — only when no other drag is active
+      if (ml && !dragging && !resizing && !scrollbar_dragging) {
+        if (active_window >= 0 && active_window < window_count) {
+          Window &aw = windows[active_window];
+          if (aw.type == WIN_APP && aw.app && aw.app->on_mouse_move &&
+              mouse_x >= aw.x && mouse_x < aw.x + aw.w &&
+              mouse_y >= aw.y + TITLEBAR_H && mouse_y < aw.y + aw.h) {
+            i32 rx = mouse_x - aw.x;
+            i32 ry = mouse_y - (aw.y + TITLEBAR_H);
+            if (try_enter() == 0) {
+              aw.app->on_mouse_move(aw.app_state, rx, ry, aw.w,
+                                    aw.h - TITLEBAR_H);
+              try_leave();
+              needs_redraw = true;
+            }
+          }
+        }
+      }
+
+      // Scroll wheel
+      if (mscroll != 0) {
+        // Find window under cursor
+        for (i32 i = window_count - 1; i >= 0; i--) {
+          Window &sw = windows[i];
+          if (!sw.visible || sw.minimized) continue;
+          if (mouse_x >= sw.x && mouse_x < sw.x + sw.w &&
+              mouse_y >= sw.y + TITLEBAR_H && mouse_y < sw.y + sw.h) {
+            if (sw.type == WIN_EXPLORER || sw.type == WIN_TEXTVIEW) {
+              scroll_window(sw, -mscroll * 3);
+              needs_redraw = true;
+            } else if (sw.type == WIN_APP && sw.app && sw.app->on_scroll) {
+              if (try_enter() == 0) {
+                sw.app->on_scroll(sw.app_state, mscroll);
+                try_leave();
+                needs_redraw = true;
+              }
+            }
+            break;
+          }
+        }
+      }
+
       prev_mouse_left = ml;
     }
 
@@ -1197,6 +1405,16 @@ void run() {
             w.selected--;
           else if (dir == 'B' && w.selected < total - 1)
             w.selected++;
+          // Auto-scroll to keep selection visible
+          i32 exp_fh = gfx::font_h();
+          i32 exp_item_h = exp_fh + 6;
+          i32 exp_ch = w.h - TITLEBAR_H - 12 - exp_fh - 6 - 4;
+          i32 vis = exp_ch / exp_item_h;
+          if (vis < 1) vis = 1;
+          if (w.selected < w.scroll)
+            w.scroll = w.selected;
+          else if (w.selected >= w.scroll + vis)
+            w.scroll = w.selected - vis + 1;
         } else if (w.type == WIN_APP && w.app && w.app->on_arrow) {
           if (try_enter() == 0) {
             w.app->on_arrow(w.app_state, dir);

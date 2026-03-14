@@ -402,6 +402,9 @@ const OgzApp taskman_app = {
     taskman_arrow,     // on_arrow
     taskman_close,     // on_close
     nullptr,           // on_click
+    nullptr,           // on_scroll
+    nullptr,           // on_mouse_down
+    nullptr,           // on_mouse_move
 };
 
 } // anonymous namespace
