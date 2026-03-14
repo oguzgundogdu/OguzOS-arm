@@ -8,6 +8,7 @@
 #include "mouse.h"
 #include "registry.h"
 #include "string.h"
+#include "syslog.h"
 #include "types.h"
 #include "uart.h"
 
@@ -230,19 +231,25 @@ void close_window(i32 idx); // forward declaration
 
 void open_app(const char *app_id) {
   const OgzApp *app = apps::find(app_id);
-  if (!app)
+  if (!app) {
+    syslog::error("gui", "app not found: %s", app_id);
     return;
+  }
+  syslog::info("gui", "opening app: %s", app->name);
   i32 idx = create_window(app->name, 80, 30, app->default_w, app->default_h,
                            WIN_APP);
-  if (idx < 0)
+  if (idx < 0) {
+    syslog::error("gui", "failed to create window (max %d reached)", MAX_WINDOWS);
     return;
+  }
   windows[idx].app = const_cast<OgzApp *>(app);
   str::memset(windows[idx].app_state, 0, sizeof(windows[idx].app_state));
   if (try_enter() == 0) {
     app->on_open(windows[idx].app_state);
     try_leave();
+    syslog::info("gui", "app opened: %s (window %d)", app->name, idx);
   } else {
-    // App crashed during open — remove the window
+    syslog::error("gui", "app crashed during open: %s", app->name);
     close_window(idx);
   }
 }
@@ -870,12 +877,17 @@ void run() {
       } else if (active_window >= 0 &&
                  windows[active_window].type == WIN_APP) {
         Window &w = windows[active_window];
+        syslog::debug("gui", "key 0x%x -> app '%s'",
+                      static_cast<unsigned int>(static_cast<u8>(key)),
+                      w.app ? w.app->name : "?");
         if (w.app && w.app->on_key) {
           if (try_enter() == 0) {
-            if (w.app->on_key(w.app_state, key))
-              needs_redraw = true;
+            bool consumed = w.app->on_key(w.app_state, key);
             try_leave();
+            if (consumed)
+              needs_redraw = true;
           } else {
+            syslog::error("gui", "app crashed on key: %s", w.app->name);
             close_window(active_window);
             needs_redraw = true;
           }

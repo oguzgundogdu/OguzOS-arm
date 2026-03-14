@@ -3,6 +3,7 @@
 #include "graphics.h"
 #include "registry.h"
 #include "string.h"
+#include "syslog.h"
 
 /*
  * terminal.ogz — OguzOS Terminal
@@ -237,6 +238,7 @@ void terminal_open(u8 *state) {
   term_append(s, "OguzOS Terminal v1.0\n");
   term_append(s, "Type 'help' for commands.\n\n");
   term_prompt(s);
+  syslog::info("term", "terminal opened");
 }
 
 void terminal_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
@@ -310,7 +312,12 @@ void terminal_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
 bool terminal_key(u8 *state, char key) {
   auto *s = reinterpret_cast<TermState *>(state);
 
+  syslog::debug("term", "key received: 0x%x ('%c')",
+                static_cast<unsigned int>(static_cast<u8>(key)),
+                (key >= 32 && key <= 126) ? static_cast<int>(key) : static_cast<int>('.'));
+
   if (key == '\r' || key == '\n') {
+    syslog::info("term", "exec: '%s'", s->cmd);
     // Echo command to output
     term_append(s, s->cmd);
     // Execute
@@ -335,6 +342,7 @@ bool terminal_key(u8 *state, char key) {
     return true;
   }
 
+  syslog::debug("term", "key ignored: 0x%x", static_cast<unsigned int>(static_cast<u8>(key)));
   return false;
 }
 

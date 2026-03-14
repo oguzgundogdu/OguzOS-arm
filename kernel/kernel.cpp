@@ -9,6 +9,7 @@
 #include "registry.h"
 #include "shell.h"
 #include "string.h"
+#include "syslog.h"
 #include "uart.h"
 
 // App registration (defined in apps/*.ogz.cpp)
@@ -71,17 +72,23 @@ extern "C" void kernel_main() {
   // Initialize UART first (for any debug output)
   uart::init();
 
+  syslog::info("kernel", "OguzOS booting...");
+
   // Initialize disk (virtio-blk)
   bool has_disk = disk::init();
+  syslog::info("kernel", "disk: %s", has_disk ? "ok" : "not found");
 
   // Initialize framebuffer (ramfb, only present with 'make gui')
-  fb::init();
+  bool has_fb = fb::init();
+  syslog::info("kernel", "framebuffer: %s", has_fb ? "ok" : "not found");
 
   // Initialize mouse (virtio-tablet, only present with 'make gui')
-  mouse::init();
+  bool has_mouse = mouse::init();
+  syslog::info("kernel", "mouse: %s", has_mouse ? "ok" : "not found");
 
   // Initialize keyboard (virtio-keyboard, only present with 'make gui')
-  keyboard::init();
+  bool has_kbd = keyboard::init();
+  syslog::info("kernel", "keyboard: %s", has_kbd ? "ok" : "not found");
 
   // Initialize network (virtio-net + DHCP)
   netdev::init();
@@ -91,22 +98,25 @@ extern "C" void kernel_main() {
 
   // Try loading filesystem from disk, fall back to default init
   if (has_disk && fs::load_from_disk()) {
-    // Restored filesystem from disk
+    syslog::info("kernel", "filesystem restored from disk");
   } else {
     fs::init();
+    syslog::info("kernel", "filesystem initialized (default)");
   }
 
   // Register .ogz apps
   apps::register_notepad();
   apps::register_terminal();
+  syslog::info("kernel", "registered %d apps", apps::count());
 
   // Print welcome banner
   print_banner();
 
   // If framebuffer is available, launch GUI directly
-  if (fb::is_available()) {
+  if (has_fb) {
+    syslog::info("kernel", "launching GUI");
     gui::run();
-    // GUI exited (Terminal/Shutdown) → fall through to shell
+    syslog::info("kernel", "GUI exited, falling back to shell");
   }
 
   // Initialize and run shell (never returns)

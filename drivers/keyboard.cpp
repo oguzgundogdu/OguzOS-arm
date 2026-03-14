@@ -1,5 +1,6 @@
 #include "keyboard.h"
 #include "string.h"
+#include "syslog.h"
 #include "uart.h"
 
 namespace {
@@ -306,6 +307,7 @@ bool init_device(u64 addr) {
   post_event_buffers();
 
   kb_initialized = true;
+  syslog::debug("kbd", "virtqueue ready, %d event buffers posted", NUM_EVT_BUFS);
   return true;
 }
 
@@ -346,8 +348,11 @@ void handle_key_event(u16 code, u32 value) {
     c = shift_held ? keymap_upper[code] : keymap_lower[code];
   }
 
-  if (c != 0)
+  if (c != 0) {
+    syslog::debug("kbd", "key code=%d -> '%c' (0x%x)", static_cast<int>(code),
+                  static_cast<int>(c), static_cast<unsigned int>(c));
     push_key(c);
+  }
 }
 
 } // anonymous namespace

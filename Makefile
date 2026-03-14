@@ -39,7 +39,7 @@ INCLUDES = -I$(ARCH_DIR) -I$(KERNEL_DIR) -I$(DRIVERS_DIR) -I$(FS_DIR) \
 
 # Flags for freestanding C++ (no standard library)
 COMMON_FLAGS = -ffreestanding -nostdlib -nostartfiles -mgeneral-regs-only \
-               -Wall -Wextra -O2
+               -mstrict-align -Wall -Wextra -O2
 
 ASFLAGS = $(COMMON_FLAGS)
 CXXFLAGS = $(COMMON_FLAGS) $(INCLUDES) -fno-exceptions -fno-rtti \
@@ -54,6 +54,7 @@ OBJS = $(BUILD_DIR)/boot.o \
        $(BUILD_DIR)/disk.o \
        $(BUILD_DIR)/netdev.o \
        $(BUILD_DIR)/string.o \
+       $(BUILD_DIR)/syslog.o \
        $(BUILD_DIR)/fs.o \
        $(BUILD_DIR)/netstack.o \
        $(BUILD_DIR)/fb.o \
@@ -112,6 +113,9 @@ $(BUILD_DIR)/mouse.o: $(DRIVERS_DIR)/mouse.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/string.o: $(LIB_DIR)/string.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/syslog.o: $(LIB_DIR)/syslog.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/fs.o: $(FS_DIR)/fs.cpp | $(BUILD_DIR)
