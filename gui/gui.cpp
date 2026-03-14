@@ -71,6 +71,9 @@ bool dragging = false;
 i32 drag_win = -1;
 i32 drag_ox, drag_oy;
 
+// Mouse-down tracking (for up-on-same-element detection)
+i32 mouse_down_x = -1, mouse_down_y = -1;
+
 // Start menu state
 bool start_menu_open = false;
 i32 start_menu_hover = -1;
@@ -659,10 +662,82 @@ void handle_menu_click(i32 item) {
   }
 }
 
-void handle_click(i32 x, i32 y) {
+// Mouse-down: focus, drag start, selection (no destructive actions)
+void handle_mouse_down(i32 x, i32 y) {
   i32 sh = static_cast<i32>(fb::height());
 
-  // Start menu click handling
+  // Press inside open start menu — just record, action on release
+  if (start_menu_open) {
+    i32 mx_menu = 2;
+    i32 my_menu = sh - TASKBAR_H - menu_h_computed;
+    if (x >= mx_menu && x < mx_menu + MENU_W && y >= my_menu + MENU_HEADER_H &&
+        y < my_menu + menu_h_computed)
+      return; // wait for mouse-up
+    // Press outside menu — close it
+    start_menu_open = false;
+    start_menu_hover = -1;
+  }
+
+  // Taskbar — record, action on release
+  if (y >= sh - TASKBAR_H)
+    return;
+
+  // Windows (back to front)
+  for (i32 i = window_count - 1; i >= 0; i--) {
+    Window &win = windows[i];
+    if (!win.visible)
+      continue;
+
+    if (x >= win.x && x < win.x + win.w && y >= win.y && y < win.y + win.h) {
+      // Close button — just highlight, action on release
+      i32 cbx = win.x + win.w - 18;
+      i32 cby = win.y + 3;
+      if (x >= cbx && x < cbx + 14 && y >= cby && y < cby + 14) {
+        bring_to_front(i);
+        return;
+      }
+
+      // Title bar → start drag
+      if (y < win.y + TITLEBAR_H) {
+        bring_to_front(i);
+        dragging = true;
+        drag_win = window_count - 1;
+        drag_ox = x - windows[drag_win].x;
+        drag_oy = y - windows[drag_win].y;
+        return;
+      }
+
+      // Content area — focus + select
+      bring_to_front(i);
+      Window &w = windows[window_count - 1];
+
+      if (w.type == WIN_EXPLORER) {
+        i32 local_y = y - w.y - TITLEBAR_H - 22;
+        if (local_y >= 0) {
+          i32 clicked_item = local_y / 16;
+          i32 total = explorer_item_count(w);
+          if (clicked_item >= 0 && clicked_item < total)
+            w.selected = clicked_item;
+        }
+      }
+      return;
+    }
+  }
+}
+
+// Mouse-up: trigger actions (close, menu, taskbar)
+void handle_mouse_up(i32 x, i32 y) {
+  i32 sh = static_cast<i32>(fb::height());
+
+  // Was it a drag? If the mouse moved far from press point, skip actions
+  i32 dx = x - mouse_down_x;
+  i32 dy = y - mouse_down_y;
+  bool was_drag = (dx * dx + dy * dy > 64);
+
+  if (was_drag)
+    return;
+
+  // Start menu item
   if (start_menu_open) {
     i32 mx_menu = 2;
     i32 my_menu = sh - TASKBAR_H - menu_h_computed;
@@ -677,9 +752,6 @@ void handle_click(i32 x, i32 y) {
       }
       return;
     }
-    // Clicked outside menu — close it
-    start_menu_open = false;
-    start_menu_hover = -1;
   }
 
   // Taskbar
@@ -689,7 +761,6 @@ void handle_click(i32 x, i32 y) {
       start_menu_hover = -1;
     } else {
       start_menu_open = false;
-      // Click on taskbar window buttons
       i32 tx = 68;
       for (i32 i = 0; i < window_count; i++) {
         if (x >= tx && x < tx + 80) {
@@ -702,42 +773,20 @@ void handle_click(i32 x, i32 y) {
     return;
   }
 
-  // Windows (back to front)
+  // Window close button (release must be on the same close button)
   for (i32 i = window_count - 1; i >= 0; i--) {
     Window &win = windows[i];
     if (!win.visible)
       continue;
 
     if (x >= win.x && x < win.x + win.w && y >= win.y && y < win.y + win.h) {
-      // Close button
       i32 cbx = win.x + win.w - 18;
       i32 cby = win.y + 3;
       if (x >= cbx && x < cbx + 14 && y >= cby && y < cby + 14) {
-        close_window(i);
-        return;
-      }
-
-      // Title bar → drag
-      if (y < win.y + TITLEBAR_H) {
-        bring_to_front(i);
-        dragging = true;
-        drag_win = window_count - 1; // window moved to front
-        drag_ox = x - windows[drag_win].x;
-        drag_oy = y - windows[drag_win].y;
-        return;
-      }
-
-      // Content area
-      bring_to_front(i);
-      Window &w = windows[window_count - 1];
-
-      if (w.type == WIN_EXPLORER) {
-        i32 local_y = y - w.y - TITLEBAR_H - 22; // after path bar
-        if (local_y >= 0) {
-          i32 clicked_item = local_y / 16;
-          i32 total = explorer_item_count(w);
-          if (clicked_item >= 0 && clicked_item < total)
-            w.selected = clicked_item;
+        // Verify press was also on this close button area
+        if (mouse_down_x >= cbx && mouse_down_x < cbx + 14 &&
+            mouse_down_y >= cby && mouse_down_y < cby + 14) {
+          close_window(i);
         }
       }
       return;
@@ -816,8 +865,16 @@ void run() {
         dragging = false;
       }
 
-      // Click on press edge
+      // Mouse-down edge: focus, drag start, selection
       if (ml && !prev_mouse_left) {
+        mouse_down_x = mouse_x;
+        mouse_down_y = mouse_y;
+        handle_mouse_down(mouse_x, mouse_y);
+        needs_redraw = true;
+      }
+
+      // Mouse-up edge: trigger actions (close, menu, taskbar)
+      if (!ml && prev_mouse_left) {
         u64 cnt, freq;
         asm volatile("mrs %0, cntpct_el0" : "=r"(cnt));
         asm volatile("mrs %0, cntfrq_el0" : "=r"(freq));
@@ -833,8 +890,8 @@ void run() {
 
         if (is_double)
           handle_double_click(mouse_x, mouse_y);
-        else
-          handle_click(mouse_x, mouse_y);
+
+        handle_mouse_up(mouse_x, mouse_y);
 
         last_click_time = cnt;
         last_click_x = mouse_x;
