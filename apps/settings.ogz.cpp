@@ -87,6 +87,7 @@ struct SettingsState {
   i32 tz_scroll; // scroll offset for timezone list
   i32 kb_sel;    // selected keyboard layout
   i32 bg_sel;    // selected background color
+  bool sb_drag;  // true when scrollbar is being dragged
 };
 
 static_assert(sizeof(SettingsState) <= 4096, "SettingsState exceeds app_state");
@@ -410,6 +411,7 @@ void settings_open(u8 *state) {
   s->tz_scroll = 0;
   s->kb_sel = settings::get_kbd_layout();
   s->bg_sel = 0;
+  s->sb_drag = false;
 
   // Find currently active background color
   u32 cur = settings::get_desktop_color();
@@ -659,6 +661,8 @@ void settings_mouse_down(u8 *state, i32 rx, i32 ry, i32 cw, i32 ch) {
   CHAR_W = gfx::font_w();
   LINE_H = gfx::font_h() + 2;
 
+  s->sb_drag = false;
+
   if (s->tab != 0) return; // only Region has a scrollbar
 
   i32 content_y = TAB_H + 2;
@@ -670,6 +674,7 @@ void settings_mouse_down(u8 *state, i32 rx, i32 ry, i32 cw, i32 ch) {
 
   constexpr i32 SB_W_HIT = 12;
   if (rx >= PAD + list_w - SB_W_HIT && local_y >= 0 && list_h > 0) {
+    s->sb_drag = true;
     i32 visible = list_h / LINE_H;
     if (visible < 1) visible = 1;
     i32 max_sc = TZ_COUNT - visible;
@@ -686,6 +691,8 @@ void settings_mouse_down(u8 *state, i32 rx, i32 ry, i32 cw, i32 ch) {
 
 void settings_mouse_move(u8 *state, i32 /*rx*/, i32 ry, i32 /*cw*/, i32 ch) {
   auto *s = reinterpret_cast<SettingsState *>(state);
+
+  if (!s->sb_drag) return;
 
   CHAR_W = gfx::font_w();
   LINE_H = gfx::font_h() + 2;
