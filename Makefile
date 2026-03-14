@@ -65,6 +65,7 @@ OBJS = $(BUILD_DIR)/boot.o \
        $(BUILD_DIR)/registry.o \
        $(BUILD_DIR)/notepad.o \
        $(BUILD_DIR)/terminal.o \
+       $(BUILD_DIR)/taskman.o \
        $(BUILD_DIR)/shell.o \
        $(BUILD_DIR)/kernel.o
 
@@ -140,6 +141,9 @@ $(BUILD_DIR)/notepad.o: $(APPS_DIR)/notepad.ogz.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/terminal.o: $(APPS_DIR)/terminal.ogz.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/taskman.o: $(APPS_DIR)/taskman.ogz.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/shell.o: $(SHELL_DIR)/shell.cpp | $(BUILD_DIR)

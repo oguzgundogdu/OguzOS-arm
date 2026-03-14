@@ -968,4 +968,32 @@ void run() {
   }
 }
 
+i32 get_window_count() { return window_count; }
+
+const char *get_window_title(i32 index) {
+  if (index < 0 || index >= window_count)
+    return nullptr;
+  return windows[index].title;
+}
+
+bool is_window_active(i32 index) {
+  if (index < 0 || index >= window_count)
+    return false;
+  return windows[index].active;
+}
+
+i32 get_window_type(i32 index) {
+  if (index < 0 || index >= window_count)
+    return -1;
+  return static_cast<i32>(windows[index].type);
+}
+
+const char *get_window_app_id(i32 index) {
+  if (index < 0 || index >= window_count)
+    return nullptr;
+  if (windows[index].type == WIN_APP && windows[index].app)
+    return windows[index].app->id;
+  return nullptr;
+}
+
 } // namespace gui

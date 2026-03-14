@@ -16,6 +16,7 @@
 namespace apps {
 void register_notepad();
 void register_terminal();
+void register_taskman();
 }
 
 namespace {
@@ -107,6 +108,7 @@ extern "C" void kernel_main() {
   // Register .ogz apps
   apps::register_notepad();
   apps::register_terminal();
+  apps::register_taskman();
   syslog::info("kernel", "registered %d apps", apps::count());
 
   // Print welcome banner
