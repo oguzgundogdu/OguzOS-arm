@@ -1317,6 +1317,11 @@ void run() {
 
       // Mouse-up edge: trigger actions (close, menu, taskbar)
       if (!ml && prev_mouse_left) {
+        // Unconditionally clear all drag states on button release
+        dragging = false;
+        resizing = false;
+        scrollbar_dragging = false;
+
         u64 cnt, freq;
         asm volatile("mrs %0, cntpct_el0" : "=r"(cnt));
         asm volatile("mrs %0, cntfrq_el0" : "=r"(freq));

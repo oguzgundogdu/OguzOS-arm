@@ -33,7 +33,7 @@ constexpr u32 STATUS_DRIVER_OK = 4;
 constexpr u32 STATUS_FEATURES_OK = 8;
 
 constexpr u16 DESC_F_WRITE = 2;
-constexpr u32 QUEUE_SIZE = 16;
+constexpr u32 QUEUE_SIZE = 128;
 constexpr u32 PAGE_SIZE = 4096;
 
 // Virtio-input event structure
@@ -84,7 +84,7 @@ struct VirtqUsed {
   VirtqUsedElem ring[QUEUE_SIZE];
 } __attribute__((packed));
 
-// Event queue memory
+// Event queue memory (descs+avail in page 0, used ring in page 1)
 alignas(4096) u8 eq_mem[2 * PAGE_SIZE];
 VirtqDesc *eq_descs;
 VirtqAvail *eq_avail;
@@ -92,7 +92,7 @@ VirtqUsed *eq_used;
 u16 eq_last_used_idx = 0;
 
 // Pre-posted event buffers
-constexpr u32 NUM_EVT_BUFS = 8;
+constexpr u32 NUM_EVT_BUFS = 64;
 VirtioInputEvent evt_bufs[NUM_EVT_BUFS];
 
 // Virtio-input config selectors
