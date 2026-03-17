@@ -8,6 +8,8 @@ namespace {
 i32 tz_offset = 0;               // UTC
 u32 desktop_color = 0x00336699;   // Default blue
 i32 kbd_layout = 0;              // English (US)
+u32 res_w = 1920;                // Screen width
+u32 res_h = 1080;                // Screen height
 
 // Simple integer-to-string helper
 void i32_to_str(i32 val, char *buf) {
@@ -74,6 +76,10 @@ u32 get_desktop_color() { return desktop_color; }
 void set_kbd_layout(i32 i) { kbd_layout = i; }
 i32 get_kbd_layout() { return kbd_layout; }
 
+void set_resolution(u32 w, u32 h) { res_w = w; res_h = h; }
+u32 get_res_w() { return res_w; }
+u32 get_res_h() { return res_h; }
+
 void save() {
   // Ensure /etc exists
   char old_cwd[256];
@@ -85,7 +91,7 @@ void save() {
   fs::touch("settings");  // ok if already exists
 
   // Build settings file content
-  char buf[256];
+  char buf[384];
   buf[0] = '\0';
 
   str::cat(buf, "tz=");
@@ -101,6 +107,16 @@ void save() {
 
   str::cat(buf, "kb=");
   i32_to_str(kbd_layout, tmp);
+  str::cat(buf, tmp);
+  str::cat(buf, "\n");
+
+  str::cat(buf, "rw=");
+  i32_to_str(static_cast<i32>(res_w), tmp);
+  str::cat(buf, tmp);
+  str::cat(buf, "\n");
+
+  str::cat(buf, "rh=");
+  i32_to_str(static_cast<i32>(res_h), tmp);
   str::cat(buf, tmp);
   str::cat(buf, "\n");
 
@@ -124,8 +140,10 @@ void load() {
     tz_offset = parse_int(data, "tz", 0);
     desktop_color = parse_u32(data, "bg", 0x00336699);
     kbd_layout = parse_int(data, "kb", 0);
-    syslog::info("settings", "loaded: tz=%d bg=0x%x kb=%d",
-                  tz_offset, desktop_color, kbd_layout);
+    res_w = parse_u32(data, "rw", 1920);
+    res_h = parse_u32(data, "rh", 1080);
+    syslog::info("settings", "loaded: tz=%d bg=0x%x kb=%d res=%dx%d",
+                  tz_offset, desktop_color, kbd_layout, res_w, res_h);
   } else {
     syslog::info("settings", "no saved settings found, using defaults");
   }

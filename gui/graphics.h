@@ -12,6 +12,9 @@ namespace gfx {
 // Initialize double-buffer (call once before drawing)
 void init();
 
+// Re-read framebuffer dimensions (call after fb::set_resolution)
+void reinit();
+
 // Copy back buffer to framebuffer (call once per frame)
 void swap();
 

@@ -66,6 +66,22 @@ const char *kb_layouts[] = {
 };
 constexpr i32 KB_COUNT = 8;
 
+struct ResPreset {
+  u32 w, h;
+  const char *label;
+};
+
+constexpr ResPreset resolutions[] = {
+    {800, 600, "800 x 600"},
+    {1024, 768, "1024 x 768"},
+    {1280, 720, "1280 x 720 (HD)"},
+    {1280, 1024, "1280 x 1024"},
+    {1366, 768, "1366 x 768"},
+    {1600, 900, "1600 x 900"},
+    {1920, 1080, "1920 x 1080 (FHD)"},
+};
+constexpr i32 RES_COUNT = sizeof(resolutions) / sizeof(resolutions[0]);
+
 struct BgPreset {
   u32 color;
   const char *name;
@@ -100,6 +116,7 @@ struct SettingsState {
   bool ft_adding;    // true when adding a new entry
   i32 mn_sel;        // selected menu entry
   i32 mn_scroll;     // scroll offset for menu list
+  i32 res_sel;       // selected resolution preset
 };
 
 static_assert(sizeof(SettingsState) <= 4096, "SettingsState exceeds app_state");
@@ -262,60 +279,69 @@ void draw_region(SettingsState *s, i32 cx, i32 cy, i32 cw, i32 ch) {
 
 // ── Display tab ─────────────────────────────────────────────────────────────
 
-void draw_display(SettingsState *, i32 cx, i32 cy, i32 cw, i32 ch) {
+void draw_display(SettingsState *s, i32 cx, i32 cy, i32 cw, i32 ch) {
   i32 x = cx + PAD;
   i32 y = cy + PAD;
   i32 w = cw - PAD * 2;
   i32 max_y = cy + ch - PAD;
 
-  gfx::draw_text(x, y, "Display Information", COL_SECTION, COL_BG);
-  y += LINE_H + 8;
+  gfx::draw_text(x, y, "Screen Resolution", COL_SECTION, COL_BG);
+  y += LINE_H + 4;
 
-  // Section background
-  gfx::fill_rect(x, y, w, LINE_H * 6 + 8, COL_ITEM_BG);
+  // Resolution list
+  for (i32 i = 0; i < RES_COUNT && y + LINE_H <= max_y - LINE_H * 5; i++) {
+    bool selected = (i == s->res_sel);
+    u32 bg = selected ? COL_ITEM_SEL : ((i % 2 == 0) ? COL_BG : COL_ITEM_BG);
+    gfx::fill_rect(x, y, w, LINE_H, bg);
 
-  auto draw_kv = [&](const char *label, const char *value, u32 vcol = COL_VALUE) {
-    if (y + LINE_H > max_y)
-      return;
-    gfx::draw_text(x + 8, y + 4, label, COL_LABEL, COL_ITEM_BG);
-    i32 vx = x + CHAR_W * 16;
-    gfx::draw_text(vx, y + 4, value, vcol, COL_ITEM_BG);
+    // Check mark for active resolution
+    bool is_active = (resolutions[i].w == fb::width() &&
+                      resolutions[i].h == fb::height());
+    if (is_active)
+      gfx::draw_text(x + 2, y + 1, "*", COL_CHECK, bg);
+
+    gfx::draw_text(x + CHAR_W * 2, y + 1, resolutions[i].label,
+                    selected ? 0x00FFFFFF : COL_VALUE, bg);
     y += LINE_H;
-  };
-
-  char buf[32];
-
-  // Resolution
-  if (fb::is_available()) {
-    int_to_str(static_cast<i64>(fb::width()), buf);
-    str::cat(buf, " x ");
-    char h[8];
-    int_to_str(static_cast<i64>(fb::height()), h);
-    str::cat(buf, h);
-    draw_kv("Resolution:", buf, COL_GOOD);
-  } else {
-    draw_kv("Resolution:", "N/A");
   }
 
-  draw_kv("Color Depth:", "32-bit XRGB8888");
-  draw_kv("Device:", "ramfb (QEMU)");
-  draw_kv("Refresh:", "Vsync (on input)");
+  y += 8;
 
-  // Font info
-  char font_buf[32];
-  int_to_str(static_cast<i64>(gfx::font_w()), font_buf);
-  str::cat(font_buf, "x");
-  char fh_str[8];
-  int_to_str(static_cast<i64>(gfx::font_h()), fh_str);
-  str::cat(font_buf, fh_str);
-  str::cat(font_buf, " JetBrains Mono");
-  draw_kv("Font:", font_buf);
+  // Display info section
+  gfx::draw_text(x, y, "Display Info", COL_SECTION, COL_BG);
+  y += LINE_H + 4;
 
-  draw_kv("Buffer:", "Double-buffered");
+  i32 info_y = y;
+  i32 info_h = LINE_H * 4 + 8;
+  if (info_y + info_h <= max_y) {
+    gfx::fill_rect(x, info_y, w, info_h, COL_ITEM_BG);
 
-  y += 16;
-  gfx::draw_text(x + 8, y, "Display settings are fixed by hardware.",
-                  COL_TEXT_DIM, COL_BG);
+    auto draw_kv = [&](const char *label, const char *value, u32 vcol = COL_VALUE) {
+      gfx::draw_text(x + 8, y + 4, label, COL_LABEL, COL_ITEM_BG);
+      gfx::draw_text(x + CHAR_W * 16, y + 4, value, vcol, COL_ITEM_BG);
+      y += LINE_H;
+    };
+
+    draw_kv("Color Depth:", "32-bit XRGB8888");
+    draw_kv("Device:", "ramfb (QEMU)");
+
+    char font_buf[32];
+    int_to_str(static_cast<i64>(gfx::font_w()), font_buf);
+    str::cat(font_buf, "x");
+    char fh_str[8];
+    int_to_str(static_cast<i64>(gfx::font_h()), fh_str);
+    str::cat(font_buf, fh_str);
+    str::cat(font_buf, " JetBrains Mono");
+    draw_kv("Font:", font_buf);
+
+    draw_kv("Buffer:", "Double-buffered");
+  }
+
+  y += LINE_H;
+  if (y + LINE_H <= max_y) {
+    gfx::draw_text(x + 8, y, "Click or Enter to apply resolution.",
+                    COL_TEXT_DIM, COL_BG);
+  }
 }
 
 // ── Keyboard tab ────────────────────────────────────────────────────────────
@@ -606,6 +632,17 @@ void settings_open(u8 *state) {
   s->ft_app[0] = '\0';
   s->mn_sel = 0;
   s->mn_scroll = 0;
+  s->res_sel = RES_COUNT - 1; // default to last (1920x1080)
+
+  // Find currently active resolution
+  u32 cw_res = fb::width();
+  u32 ch_res = fb::height();
+  for (i32 i = 0; i < RES_COUNT; i++) {
+    if (resolutions[i].w == cw_res && resolutions[i].h == ch_res) {
+      s->res_sel = i;
+      break;
+    }
+  }
 
   // Find currently active background color
   u32 cur = settings::get_desktop_color();
@@ -664,6 +701,18 @@ void apply_current(SettingsState *s) {
       settings::set_tz_offset(timezones[s->tz_sel].offset);
       syslog::info("settings", "timezone set to %s (%s)",
                     timezones[s->tz_sel].label, timezones[s->tz_sel].city);
+    }
+    break;
+  case 1: // Display
+    if (s->res_sel >= 0 && s->res_sel < RES_COUNT) {
+      u32 nw = resolutions[s->res_sel].w;
+      u32 nh = resolutions[s->res_sel].h;
+      if (fb::set_resolution(nw, nh)) {
+        gfx::reinit();
+        settings::set_resolution(nw, nh);
+        syslog::info("settings", "resolution set to %s",
+                      resolutions[s->res_sel].label);
+      }
     }
     break;
   case 2: // Keyboard
@@ -736,6 +785,10 @@ void settings_arrow(u8 *state, char dir) {
       if (s->tz_sel > 0)
         s->tz_sel--;
       break;
+    case 1:
+      if (s->res_sel > 0)
+        s->res_sel--;
+      break;
     case 2:
       if (s->kb_sel > 0)
         s->kb_sel--;
@@ -759,6 +812,10 @@ void settings_arrow(u8 *state, char dir) {
     case 0:
       if (s->tz_sel < TZ_COUNT - 1)
         s->tz_sel++;
+      break;
+    case 1:
+      if (s->res_sel < RES_COUNT - 1)
+        s->res_sel++;
       break;
     case 2:
       if (s->kb_sel < KB_COUNT - 1)
@@ -835,6 +892,28 @@ void settings_click(u8 *state, i32 rx, i32 ry, i32 cw, i32 ch) {
         settings::save();
         syslog::info("settings", "timezone set to %s (%s)",
                       timezones[s->tz_sel].label, timezones[s->tz_sel].city);
+      }
+    }
+    break;
+  }
+  case 1: {
+    // Display: click on resolution list
+    i32 list_y = PAD + LINE_H + 4;
+    i32 local_y = content_ry - list_y;
+    if (local_y >= 0) {
+      i32 clicked = local_y / LINE_H;
+      if (clicked >= 0 && clicked < RES_COUNT) {
+        s->res_sel = clicked;
+        // Apply immediately on click
+        u32 nw = resolutions[clicked].w;
+        u32 nh = resolutions[clicked].h;
+        if (fb::set_resolution(nw, nh)) {
+          gfx::reinit();
+          settings::set_resolution(nw, nh);
+          settings::save();
+          syslog::info("settings", "resolution set to %s",
+                        resolutions[clicked].label);
+        }
       }
     }
     break;

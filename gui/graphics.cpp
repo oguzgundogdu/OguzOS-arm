@@ -43,6 +43,11 @@ void init() {
   str::memset(backbuf, 0, sizeof(backbuf));
 }
 
+void reinit() {
+  screen_w = fb::width();
+  screen_h = fb::height();
+}
+
 void swap() {
   u32 *front = fb::buffer();
   u32 total = screen_w * screen_h;

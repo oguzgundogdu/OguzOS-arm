@@ -21,6 +21,11 @@ u32 get_desktop_color();
 void set_kbd_layout(i32 index);
 i32 get_kbd_layout();
 
+// Screen resolution
+void set_resolution(u32 w, u32 h);
+u32 get_res_w();
+u32 get_res_h();
+
 // Persist settings to /etc/settings and load them back
 void save();
 void load();

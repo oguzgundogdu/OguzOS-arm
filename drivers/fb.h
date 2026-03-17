@@ -5,13 +5,16 @@
 /*
  * OguzOS Framebuffer Driver
  * Uses QEMU ramfb device via fw_cfg interface.
- * Provides a 640x480 32-bit (XRGB8888) linear framebuffer.
+ * Provides a 32-bit (XRGB8888) linear framebuffer with runtime resolution.
  */
 
 namespace fb {
 
 // Initialize ramfb framebuffer via fw_cfg
 bool init();
+
+// Change resolution at runtime (re-configures ramfb via DMA)
+bool set_resolution(u32 w, u32 h);
 
 // Check if framebuffer is available
 bool is_available();

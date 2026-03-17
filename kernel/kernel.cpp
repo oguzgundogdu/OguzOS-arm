@@ -121,6 +121,16 @@ extern "C" void kernel_main() {
   // Load saved settings from /etc/settings
   settings::load();
 
+  // Apply saved resolution (if different from default 1920x1080)
+  if (has_fb) {
+    u32 sw = settings::get_res_w();
+    u32 sh = settings::get_res_h();
+    if (sw != fb::width() || sh != fb::height()) {
+      if (fb::set_resolution(sw, sh))
+        syslog::info("kernel", "resolution set to %dx%d from settings", sw, sh);
+    }
+  }
+
   // Initialize environment variables
   env::init();
 

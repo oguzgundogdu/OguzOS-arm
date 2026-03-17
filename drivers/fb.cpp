@@ -12,14 +12,19 @@ constexpr u64 FWCFG_DMA = FWCFG_BASE + 0x010;
 
 // Framebuffer lives at a fixed address in guest RAM
 constexpr u64 FB_ADDR = 0x46000000;
-constexpr u32 FB_WIDTH = 1920;
-constexpr u32 FB_HEIGHT = 1080;
 constexpr u32 FB_BPP = 4;
-constexpr u32 FB_STRIDE = FB_WIDTH * FB_BPP;
-
 constexpr u32 FOURCC_XRGB8888 = 0x34325258;
 
+// Default resolution
+constexpr u32 DEFAULT_W = 1920;
+constexpr u32 DEFAULT_H = 1080;
+
+// Mutable current resolution
+u32 cur_w = DEFAULT_W;
+u32 cur_h = DEFAULT_H;
+
 bool initialized = false;
+i32 ramfb_sel = -1; // cached selector for runtime reconfiguration
 
 // ── Byte-swap helpers (ARM64 is LE, fw_cfg DMA structs are BE) ──────────────
 u16 to_be16(u16 v) {
@@ -125,41 +130,49 @@ i32 find_ramfb_selector() {
   return -1;
 }
 
-} // anonymous namespace
+// ramfb config struct (28 bytes, all fields big-endian)
+struct RAMFBCfg {
+  u64 addr;
+  u32 fourcc;
+  u32 flags;
+  u32 width;
+  u32 height;
+  u32 stride;
+} __attribute__((packed));
 
-namespace fb {
-
-bool init() {
-  i32 selector = find_ramfb_selector();
-  if (selector < 0) {
-    uart::puts("  [fb]   ramfb not found\n");
-    return false;
-  }
-
+bool configure_ramfb(u32 w, u32 h) {
   // Clear framebuffer memory
   str::memset(reinterpret_cast<void *>(FB_ADDR), 0,
-              FB_WIDTH * FB_HEIGHT * FB_BPP);
-
-  // Prepare ramfb config struct (28 bytes, all fields big-endian)
-  struct RAMFBCfg {
-    u64 addr;
-    u32 fourcc;
-    u32 flags;
-    u32 width;
-    u32 height;
-    u32 stride;
-  } __attribute__((packed));
+              w * h * FB_BPP);
 
   alignas(64) RAMFBCfg cfg;
   cfg.addr = to_be64(FB_ADDR);
   cfg.fourcc = to_be32(FOURCC_XRGB8888);
   cfg.flags = 0;
-  cfg.width = to_be32(FB_WIDTH);
-  cfg.height = to_be32(FB_HEIGHT);
-  cfg.stride = to_be32(FB_STRIDE);
+  cfg.width = to_be32(w);
+  cfg.height = to_be32(h);
+  cfg.stride = to_be32(w * FB_BPP);
 
-  // Write config via DMA (byte-by-byte writes removed in QEMU 2.4+)
-  if (!fwcfg_dma_write(static_cast<u16>(selector), &cfg, sizeof(cfg))) {
+  if (!fwcfg_dma_write(static_cast<u16>(ramfb_sel), &cfg, sizeof(cfg)))
+    return false;
+
+  cur_w = w;
+  cur_h = h;
+  return true;
+}
+
+} // anonymous namespace
+
+namespace fb {
+
+bool init() {
+  ramfb_sel = find_ramfb_selector();
+  if (ramfb_sel < 0) {
+    uart::puts("  [fb]   ramfb not found\n");
+    return false;
+  }
+
+  if (!configure_ramfb(DEFAULT_W, DEFAULT_H)) {
     uart::puts("  [fb]   ramfb DMA write failed\n");
     return false;
   }
@@ -169,12 +182,24 @@ bool init() {
   return true;
 }
 
+bool set_resolution(u32 w, u32 h) {
+  if (!initialized || ramfb_sel < 0)
+    return false;
+  if (w == cur_w && h == cur_h)
+    return true;
+  if (!configure_ramfb(w, h)) {
+    uart::puts("  [fb]   resolution change failed\n");
+    return false;
+  }
+  return true;
+}
+
 bool is_available() { return initialized; }
 
 u32 *buffer() { return reinterpret_cast<u32 *>(FB_ADDR); }
 
-u32 width() { return FB_WIDTH; }
+u32 width() { return cur_w; }
 
-u32 height() { return FB_HEIGHT; }
+u32 height() { return cur_h; }
 
 } // namespace fb
