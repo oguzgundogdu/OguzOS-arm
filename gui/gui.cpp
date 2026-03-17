@@ -268,6 +268,18 @@ void confirm_dialog_close() {
   confirm_dialog_open = false;
 }
 
+// ── Desktop icons (from /home/Desktop) ──────────────────────────────────────
+constexpr const char *DESKTOP_PATH = "/home/Desktop";
+constexpr i32 ICON_W = 72;
+constexpr i32 ICON_H = 64;
+constexpr i32 ICON_PAD_X = 8;
+constexpr i32 ICON_PAD_Y = 8;
+constexpr i32 ICON_GRID_X = ICON_W + ICON_PAD_X;   // 80
+constexpr i32 ICON_GRID_Y = ICON_H + ICON_PAD_Y;   // 72
+constexpr i32 ICON_BOX = 36;  // icon square size
+constexpr i32 ICON_TOP_PAD = 6; // top padding inside cell
+i32 desktop_selected = -1; // selected desktop icon index (-1 = none)
+
 // Flag to signal exit from GUI loop
 bool should_exit = false;
 
@@ -511,7 +523,121 @@ void explorer_activate(Window &win) {
 }
 
 // ── Drawing ─────────────────────────────────────────────────────────────────
-void draw_desktop() { gfx::clear(settings::get_desktop_color()); }
+void draw_desktop() {
+  gfx::clear(settings::get_desktop_color());
+
+  // Draw icons from /home/Desktop
+  i32 dir_idx = fs::resolve(DESKTOP_PATH);
+  if (dir_idx < 0) return;
+  const fs::Node *dir = fs::get_node(dir_idx);
+  if (!dir || dir->type != fs::NodeType::Directory) return;
+
+  i32 sh = static_cast<i32>(fb::height()) - TASKBAR_H;
+
+  // Layout: vertical column from top, wrap to next column
+  i32 max_rows = (sh - ICON_PAD_Y) / ICON_GRID_Y;
+  if (max_rows < 1) max_rows = 1;
+
+  for (i32 i = 0; i < static_cast<i32>(dir->child_count); i++) {
+    i32 ci = dir->children[i];
+    const fs::Node *child = fs::get_node(ci);
+    if (!child || !child->used) continue;
+
+    i32 col = i / max_rows;
+    i32 row = i % max_rows;
+    i32 ix = ICON_PAD_X + col * ICON_GRID_X;
+    i32 iy = ICON_PAD_Y + row * ICON_GRID_Y;
+
+    bool selected = (desktop_selected == i);
+
+    // Selection highlight
+    if (selected)
+      gfx::fill_rect(ix, iy, ICON_W, ICON_H, 0x00446699);
+
+    // Icon box (centered horizontally in cell)
+    i32 box_x = ix + (ICON_W - ICON_BOX) / 2;
+    i32 box_y = iy + ICON_TOP_PAD;
+    u32 icon_col = (child->type == fs::NodeType::Directory) ? COL_FOLDER : COL_FILE_ICON;
+    gfx::fill_rect(box_x, box_y, ICON_BOX, ICON_BOX, icon_col);
+    // Small inner detail
+    if (child->type == fs::NodeType::Directory) {
+      gfx::fill_rect(box_x + 2, box_y + 2, ICON_BOX / 2, 4, 0x00DDaa22);
+    } else {
+      gfx::fill_rect(box_x + 4, box_y + 4, ICON_BOX - 8, 2, 0x00FFFFFF);
+      gfx::fill_rect(box_x + 4, box_y + 9, ICON_BOX - 8, 2, 0x00FFFFFF);
+      gfx::fill_rect(box_x + 4, box_y + 14, ICON_BOX - 12, 2, 0x00FFFFFF);
+    }
+
+    // Label (truncated, centered)
+    char label[12];
+    str::ncpy(label, child->name, 10);
+    label[10] = '\0';
+    // If name was truncated, add ".."
+    if (str::len(child->name) > 10) {
+      label[8] = '.';
+      label[9] = '.';
+      label[10] = '\0';
+    }
+    i32 tw = gfx::text_width(label);
+    i32 tx = ix + (ICON_W - tw) / 2;
+    if (tx < ix) tx = ix;
+    i32 ty = box_y + ICON_BOX + 3;
+
+    u32 label_fg = selected ? 0x00FFFFFF : 0x00FFFFFF;
+    gfx::draw_text_nobg(tx, ty, label, label_fg);
+  }
+}
+
+// Hit-test desktop icons: returns icon index or -1
+i32 desktop_icon_at(i32 x, i32 y) {
+  i32 dir_idx = fs::resolve(DESKTOP_PATH);
+  if (dir_idx < 0) return -1;
+  const fs::Node *dir = fs::get_node(dir_idx);
+  if (!dir) return -1;
+
+  i32 sh = static_cast<i32>(fb::height()) - TASKBAR_H;
+  i32 max_rows = (sh - ICON_PAD_Y) / ICON_GRID_Y;
+  if (max_rows < 1) max_rows = 1;
+
+  for (i32 i = 0; i < static_cast<i32>(dir->child_count); i++) {
+    i32 col = i / max_rows;
+    i32 row = i % max_rows;
+    i32 ix = ICON_PAD_X + col * ICON_GRID_X;
+    i32 iy = ICON_PAD_Y + row * ICON_GRID_Y;
+    if (x >= ix && x < ix + ICON_W && y >= iy && y < iy + ICON_H)
+      return i;
+  }
+  return -1;
+}
+
+// Open a desktop icon (file or folder)
+void desktop_activate(i32 icon_idx) {
+  i32 dir_idx = fs::resolve(DESKTOP_PATH);
+  if (dir_idx < 0) return;
+  const fs::Node *dir = fs::get_node(dir_idx);
+  if (!dir) return;
+  if (icon_idx < 0 || icon_idx >= static_cast<i32>(dir->child_count)) return;
+
+  i32 ci = dir->children[icon_idx];
+  const fs::Node *child = fs::get_node(ci);
+  if (!child) return;
+
+  if (child->type == fs::NodeType::Directory) {
+    // Open folder in explorer
+    char path[256];
+    str::cpy(path, DESKTOP_PATH);
+    str::cat(path, "/");
+    str::cat(path, child->name);
+    open_explorer(path);
+  } else {
+    // Open file
+    char fpath[256];
+    str::cpy(fpath, DESKTOP_PATH);
+    str::cat(fpath, "/");
+    str::cat(fpath, child->name);
+    gui::open_file(fpath, child->content);
+  }
+}
 
 void draw_taskbar() {
   i32 sh = static_cast<i32>(fb::height());
@@ -1246,6 +1372,14 @@ void open_ctx_desktop(i32 x, i32 y) {
   ctx_count = 0;
   ctx_win = -1;
 
+  // Check if right-clicked on a desktop icon
+  i32 icon = desktop_icon_at(x, y);
+  if (icon >= 0) {
+    desktop_selected = icon;
+    ctx_items[ctx_count++] = {"Open", CTX_OPEN, false};
+    ctx_items[ctx_count++] = {"Delete", CTX_DELETE, true};
+  }
+
   ctx_items[ctx_count++] = {"Open Explorer", CTX_OPEN_EXPLORER, true};
   ctx_items[ctx_count++] = {"New File", CTX_NEW_FILE, false};
   ctx_items[ctx_count++] = {"New Folder", CTX_NEW_FOLDER, true};
@@ -1290,18 +1424,32 @@ void handle_ctx_action(i32 item) {
     break;
 
   case CTX_DELETE: {
-    if (ctx_win < 0 || ctx_win >= window_count)
-      break;
-    Window &win = windows[ctx_win];
-    i32 dir_idx = fs::resolve(win.path);
-    const fs::Node *dir = fs::get_node(dir_idx);
-    if (!dir) break;
-    bool has_dotdot = (dir_idx != 0);
-    i32 child_sel = has_dotdot ? (win.selected - 1) : win.selected;
-    if (child_sel < 0 || child_sel >= static_cast<i32>(dir->child_count))
-      break;
-    i32 ci = dir->children[child_sel];
-    const fs::Node *child = fs::get_node(ci);
+    const fs::Node *child = nullptr;
+    i32 ci = -1;
+
+    if (ctx_win >= 0 && ctx_win < window_count) {
+      // Delete from explorer window
+      Window &win = windows[ctx_win];
+      i32 dir_idx = fs::resolve(win.path);
+      const fs::Node *dir = fs::get_node(dir_idx);
+      if (!dir) break;
+      bool has_dotdot = (dir_idx != 0);
+      i32 child_sel = has_dotdot ? (win.selected - 1) : win.selected;
+      if (child_sel < 0 || child_sel >= static_cast<i32>(dir->child_count))
+        break;
+      ci = dir->children[child_sel];
+      child = fs::get_node(ci);
+    } else {
+      // Delete from desktop
+      i32 dir_idx = fs::resolve(DESKTOP_PATH);
+      const fs::Node *dir = fs::get_node(dir_idx);
+      if (!dir || desktop_selected < 0 ||
+          desktop_selected >= static_cast<i32>(dir->child_count))
+        break;
+      ci = dir->children[desktop_selected];
+      child = fs::get_node(ci);
+    }
+
     if (!child) break;
 
     // Open confirmation dialog
@@ -1309,22 +1457,23 @@ void handle_ctx_action(i32 item) {
     str::cpy(confirm_dialog_title, "Confirm Delete");
     confirm_dialog_msg[0] = '\0';
     str::cat(confirm_dialog_msg, "Delete \"");
-    // Truncate name if too long for dialog
     char short_name[48];
     str::ncpy(short_name, child->name, 47);
     str::cat(confirm_dialog_msg, short_name);
     str::cat(confirm_dialog_msg, "\"?");
     confirm_dialog_win = ctx_win;
-    confirm_dialog_sel = win.selected;
+    confirm_dialog_sel = (ctx_win >= 0) ? windows[ctx_win].selected : desktop_selected;
     confirm_dialog_node = ci;
     confirm_dialog_focus = false; // default to Cancel
     break;
   }
 
   case CTX_OPEN: {
-    if (ctx_win < 0 || ctx_win >= window_count)
-      break;
-    explorer_activate(windows[ctx_win]);
+    if (ctx_win >= 0 && ctx_win < window_count) {
+      explorer_activate(windows[ctx_win]);
+    } else if (desktop_selected >= 0) {
+      desktop_activate(desktop_selected);
+    }
     break;
   }
 
@@ -1346,12 +1495,15 @@ void handle_confirm_dialog_yes() {
       if (fs::rm_recursive(confirm_dialog_node)) {
         syslog::info("gui", "deleted: %s", name);
         fs::sync_to_disk();
-        // Adjust selection in explorer
+        // Adjust selection
         if (confirm_dialog_win >= 0 && confirm_dialog_win < window_count) {
           Window &win = windows[confirm_dialog_win];
           i32 total = explorer_item_count(win);
           if (win.selected >= total && win.selected > 0)
             win.selected--;
+        } else {
+          // Desktop icon
+          desktop_selected = -1;
         }
       }
     }
@@ -1369,7 +1521,7 @@ void handle_input_dialog_confirm() {
   if (input_dialog_win >= 0 && input_dialog_win < window_count) {
     str::ncpy(target_path, windows[input_dialog_win].path, 255);
   } else {
-    str::cpy(target_path, "/home");
+    str::cpy(target_path, DESKTOP_PATH);
   }
 
   char old_cwd[256];
@@ -1534,6 +1686,9 @@ void handle_mouse_down(i32 x, i32 y) {
       return;
     }
   }
+
+  // Click on desktop — select icon or deselect
+  desktop_selected = desktop_icon_at(x, y);
 }
 
 // Mouse-up: trigger actions (close, menu, taskbar)
@@ -1703,29 +1858,39 @@ void handle_mouse_up(i32 x, i32 y) {
 }
 
 void handle_double_click(i32 x, i32 y) {
-  if (active_window < 0)
-    return;
-  Window &win = windows[active_window];
-  if (win.minimized)
-    return;
+  if (active_window >= 0) {
+    Window &win = windows[active_window];
+    if (!win.minimized) {
+      // Double-click title bar → toggle maximize
+      if (x >= win.x && x < win.x + win.w &&
+          y >= win.y && y < win.y + TITLEBAR_H) {
+        toggle_maximize(active_window);
+        return;
+      }
 
-  // Double-click title bar → toggle maximize
-  if (x >= win.x && x < win.x + win.w &&
-      y >= win.y && y < win.y + TITLEBAR_H) {
-    toggle_maximize(active_window);
-    return;
-  }
+      // Double-click explorer content → activate item
+      if (win.type == WIN_EXPLORER) {
+        i32 exp_pad = 6;
+        i32 exp_path_h = gfx::font_h() + 6;
+        i32 list_top = win.y + TITLEBAR_H + exp_pad + exp_path_h + 4;
+        if (x >= win.x && x < win.x + win.w &&
+            y >= list_top && y < win.y + win.h) {
+          explorer_activate(win);
+          return;
+        }
+      }
 
-  // Double-click explorer content → activate item
-  if (win.type == WIN_EXPLORER) {
-    i32 exp_pad = 6;
-    i32 exp_path_h = gfx::font_h() + 6;
-    i32 list_top = win.y + TITLEBAR_H + exp_pad + exp_path_h + 4;
-    if (x >= win.x && x < win.x + win.w &&
-        y >= list_top && y < win.y + win.h) {
-      explorer_activate(win);
+      // If double-click was inside a window, don't check desktop
+      if (x >= win.x && x < win.x + win.w &&
+          y >= win.y && y < win.y + win.h)
+        return;
     }
   }
+
+  // Double-click on desktop icon → open it
+  i32 icon = desktop_icon_at(x, y);
+  if (icon >= 0)
+    desktop_activate(icon);
 }
 
 } // anonymous namespace
@@ -1816,6 +1981,7 @@ void run() {
   ctx_open = false;
   input_dialog_open = false;
   confirm_dialog_open = false;
+  desktop_selected = -1;
   should_exit = false;
 
   gfx::init();

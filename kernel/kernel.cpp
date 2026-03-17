@@ -161,10 +161,17 @@ extern "C" void kernel_main() {
   apps::register_browser();
   syslog::info("kernel", "registered %d apps", apps::count());
 
-  // Populate /bin with app binaries (ensure /bin exists for disk-restored FS)
+  // Ensure key directories exist (even on disk-restored FS)
   fs::cd("/");
   if (fs::resolve("/bin") < 0)
     fs::mkdir("bin");
+  if (fs::resolve("/home") < 0)
+    fs::mkdir("home");
+  if (fs::resolve("/home/Desktop") < 0) {
+    fs::cd("/home");
+    fs::mkdir("Desktop");
+    fs::cd("/");
+  }
   fs::cd("/bin");
   for (i32 i = 0; i < apps::count(); i++) {
     const OgzApp *app = apps::get(i);

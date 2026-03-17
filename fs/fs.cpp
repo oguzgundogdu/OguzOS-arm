@@ -145,6 +145,7 @@ void init() {
 
   // Create a welcome file
   cd("home");
+  mkdir("Desktop");
   touch("welcome.txt");
   write("welcome.txt", "Welcome to OguzOS!\n"
                        "This is a minimal ARM64 operating system.\n"
