@@ -51,11 +51,14 @@ constexpr u16 EV_ABS = 0x03;
 // Virtio-input config selectors
 constexpr u8 VIRTIO_INPUT_CFG_EV_BITS = 0x11;
 
-// Linux keycodes for arrow keys
+// Linux keycodes for arrow/nav keys
 constexpr u16 KEY_UP = 103;
 constexpr u16 KEY_DOWN = 108;
 constexpr u16 KEY_LEFT = 105;
 constexpr u16 KEY_RIGHT = 106;
+constexpr u16 KEY_HOME = 102;
+constexpr u16 KEY_END = 107;
+constexpr u16 KEY_DELETE = 111;
 
 // Modifier keycodes
 constexpr u16 KEY_LEFTSHIFT = 42;
@@ -549,6 +552,9 @@ void handle_key_event(u16 code, u32 value) {
   if (code == KEY_DOWN) { push_arrow('B'); return; }
   if (code == KEY_RIGHT) { push_arrow('C'); return; }
   if (code == KEY_LEFT) { push_arrow('D'); return; }
+  if (code == KEY_HOME) { push_arrow('H'); return; }
+  if (code == KEY_END) { push_arrow('F'); return; }
+  if (code == KEY_DELETE) { push_key(0x04); return; } // Ctrl+D (forward delete)
 
   // Map keycode to ASCII using active layout
   if (code >= 128)
