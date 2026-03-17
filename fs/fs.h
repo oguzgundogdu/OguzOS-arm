@@ -68,6 +68,9 @@ const char *cat(const char *name);
 // Remove a file or empty directory
 bool rm(const char *name);
 
+// Remove a file or directory recursively
+bool rm_recursive(i32 node_idx);
+
 // Get info about a node
 bool stat(const char *name);
 

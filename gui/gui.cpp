@@ -246,6 +246,15 @@ i32 input_dialog_cursor = 0;
 CtxAction input_dialog_action = CTX_NEW_FILE;
 i32 input_dialog_win = -1;      // target explorer window
 
+// Confirm dialog for Delete
+bool confirm_dialog_open = false;
+char confirm_dialog_title[64];
+char confirm_dialog_msg[128];
+i32 confirm_dialog_win = -1;    // target explorer window
+i32 confirm_dialog_sel = -1;    // selected item index in explorer
+i32 confirm_dialog_node = -1;   // node index to delete
+bool confirm_dialog_focus = true; // true = Yes focused
+
 void ctx_close() {
   ctx_open = false;
   ctx_hover = -1;
@@ -253,6 +262,10 @@ void ctx_close() {
 
 void input_dialog_close() {
   input_dialog_open = false;
+}
+
+void confirm_dialog_close() {
+  confirm_dialog_open = false;
 }
 
 // Flag to signal exit from GUI loop
@@ -1009,6 +1022,51 @@ void draw_input_dialog() {
                   0x00888888, 0x00F0F0F0);
 }
 
+void draw_confirm_dialog() {
+  if (!confirm_dialog_open)
+    return;
+  i32 sw = static_cast<i32>(fb::width());
+  i32 sh = static_cast<i32>(fb::height());
+  i32 dw = 320, dh = 110;
+  i32 dx = (sw - dw) / 2;
+  i32 dy = (sh - dh) / 2;
+  i32 fh = gfx::font_h();
+  i32 fw = gfx::font_w();
+
+  // Shadow + background
+  gfx::fill_rect(dx + 3, dy + 3, dw, dh, 0x00333333);
+  gfx::fill_rect(dx, dy, dw, dh, 0x00F0F0F0);
+  gfx::rect(dx, dy, dw, dh, 0x00666666);
+
+  // Title bar
+  gfx::fill_rect(dx, dy, dw, 24, COL_CLOSE_BTN);
+  gfx::draw_text(dx + 8, dy + (24 - fh) / 2, confirm_dialog_title,
+                  COL_TEXT_LIGHT, COL_CLOSE_BTN);
+
+  // Message
+  gfx::draw_text(dx + 12, dy + 34, confirm_dialog_msg, COL_TEXT_DARK, 0x00F0F0F0);
+
+  // Buttons
+  i32 btn_w = fw * 8 + 8;
+  i32 btn_h = fh + 8;
+  i32 btn_y = dy + dh - btn_h - 12;
+  i32 yes_x = dx + dw / 2 - btn_w - 8;
+  i32 no_x = dx + dw / 2 + 8;
+
+  u32 yes_bg = confirm_dialog_focus ? COL_CLOSE_BTN : 0x00CCCCCC;
+  u32 yes_fg = confirm_dialog_focus ? 0x00FFFFFF : COL_TEXT_DARK;
+  u32 no_bg = !confirm_dialog_focus ? COL_WIN_TITLE : 0x00CCCCCC;
+  u32 no_fg = !confirm_dialog_focus ? 0x00FFFFFF : COL_TEXT_DARK;
+
+  gfx::fill_rect(yes_x, btn_y, btn_w, btn_h, yes_bg);
+  gfx::rect(yes_x, btn_y, btn_w, btn_h, 0x00888888);
+  gfx::draw_text(yes_x + (btn_w - fw * 6) / 2, btn_y + 4, "Delete", yes_fg, yes_bg);
+
+  gfx::fill_rect(no_x, btn_y, btn_w, btn_h, no_bg);
+  gfx::rect(no_x, btn_y, btn_w, btn_h, 0x00888888);
+  gfx::draw_text(no_x + (btn_w - fw * 6) / 2, btn_y + 4, "Cancel", no_fg, no_bg);
+}
+
 void render() {
   draw_desktop();
   for (i32 i = 0; i < window_count; i++) {
@@ -1042,6 +1100,7 @@ void render() {
   draw_start_menu();
   draw_context_menu();
   draw_input_dialog();
+  draw_confirm_dialog();
   draw_cursor();
 }
 
@@ -1129,6 +1188,7 @@ void handle_menu_click(i32 item) {
     for (;;)
       asm volatile("wfe");
   } else if (item == mi_shutdown) {
+    fs::sync_to_disk();
     asm volatile("movz x0, #0x8400, lsl #16\n"
                  "movk x0, #0x0008\n"
                  "hvc #0\n" ::: "x0");
@@ -1244,16 +1304,20 @@ void handle_ctx_action(i32 item) {
     const fs::Node *child = fs::get_node(ci);
     if (!child) break;
 
-    // cd to directory, rm, cd back
-    char old_cwd[256];
-    fs::get_cwd(old_cwd, sizeof(old_cwd));
-    fs::cd(win.path);
-    if (fs::rm(child->name)) {
-      syslog::info("gui", "deleted: %s", child->name);
-      fs::sync_to_disk();
-      if (win.selected > 0) win.selected--;
-    }
-    fs::cd(old_cwd);
+    // Open confirmation dialog
+    confirm_dialog_open = true;
+    str::cpy(confirm_dialog_title, "Confirm Delete");
+    confirm_dialog_msg[0] = '\0';
+    str::cat(confirm_dialog_msg, "Delete \"");
+    // Truncate name if too long for dialog
+    char short_name[48];
+    str::ncpy(short_name, child->name, 47);
+    str::cat(confirm_dialog_msg, short_name);
+    str::cat(confirm_dialog_msg, "\"?");
+    confirm_dialog_win = ctx_win;
+    confirm_dialog_sel = win.selected;
+    confirm_dialog_node = ci;
+    confirm_dialog_focus = false; // default to Cancel
     break;
   }
 
@@ -1272,6 +1336,27 @@ void handle_ctx_action(i32 item) {
     // Just triggers a redraw
     break;
   }
+}
+
+void handle_confirm_dialog_yes() {
+  if (confirm_dialog_node >= 0) {
+    const fs::Node *node = fs::get_node(confirm_dialog_node);
+    if (node && node->used) {
+      const char *name = node->name;
+      if (fs::rm_recursive(confirm_dialog_node)) {
+        syslog::info("gui", "deleted: %s", name);
+        fs::sync_to_disk();
+        // Adjust selection in explorer
+        if (confirm_dialog_win >= 0 && confirm_dialog_win < window_count) {
+          Window &win = windows[confirm_dialog_win];
+          i32 total = explorer_item_count(win);
+          if (win.selected >= total && win.selected > 0)
+            win.selected--;
+        }
+      }
+    }
+  }
+  confirm_dialog_close();
 }
 
 void handle_input_dialog_confirm() {
@@ -1309,8 +1394,8 @@ void handle_input_dialog_confirm() {
 
 // Mouse-down: focus, drag start, resize start, selection (no destructive actions)
 void handle_mouse_down(i32 x, i32 y) {
-  // Input dialog eats all clicks outside itself
-  if (input_dialog_open)
+  // Modal dialogs eat all clicks
+  if (confirm_dialog_open || input_dialog_open)
     return;
 
   // Context menu handling
@@ -1455,6 +1540,31 @@ void handle_mouse_down(i32 x, i32 y) {
 void handle_mouse_up(i32 x, i32 y) {
   if (input_dialog_open)
     return;
+
+  // Confirm dialog button clicks
+  if (confirm_dialog_open) {
+    i32 sw2 = static_cast<i32>(fb::width());
+    i32 sh2 = static_cast<i32>(fb::height());
+    i32 dw = 320, dh = 110;
+    i32 ddx = (sw2 - dw) / 2;
+    i32 ddy = (sh2 - dh) / 2;
+    i32 fh = gfx::font_h();
+    i32 fw2 = gfx::font_w();
+    i32 btn_w = fw2 * 8 + 8;
+    i32 btn_h = fh + 8;
+    i32 btn_y = ddy + dh - btn_h - 12;
+    i32 yes_x = ddx + dw / 2 - btn_w - 8;
+    i32 no_x = ddx + dw / 2 + 8;
+
+    if (y >= btn_y && y < btn_y + btn_h) {
+      if (x >= yes_x && x < yes_x + btn_w) {
+        handle_confirm_dialog_yes();
+      } else if (x >= no_x && x < no_x + btn_w) {
+        confirm_dialog_close();
+      }
+    }
+    return;
+  }
 
   i32 sh = static_cast<i32>(fb::height());
 
@@ -1705,6 +1815,7 @@ void run() {
   start_menu_hover = -1;
   ctx_open = false;
   input_dialog_open = false;
+  confirm_dialog_open = false;
   should_exit = false;
 
   gfx::init();
@@ -1946,6 +2057,13 @@ void run() {
 
     // ── Helper: handle arrow key ──────────────────────────────────────
     auto handle_arrow = [&](char dir) {
+      // Confirm dialog: left/right to switch buttons
+      if (confirm_dialog_open) {
+        if (dir == 'D') confirm_dialog_focus = true;   // Left = Delete
+        else if (dir == 'C') confirm_dialog_focus = false; // Right = Cancel
+        needs_redraw = true;
+        return;
+      }
       if (active_window >= 0) {
         Window &w = windows[active_window];
         if (w.type == WIN_EXPLORER) {
@@ -1980,9 +2098,26 @@ void run() {
     auto handle_key = [&](char key) {
       // Escape from virtio keyboard
       if (key == 0x1B) {
-        if (input_dialog_open) input_dialog_close();
+        if (confirm_dialog_open) confirm_dialog_close();
+        else if (input_dialog_open) input_dialog_close();
         else if (ctx_open) ctx_close();
         else if (start_menu_open) { start_menu_open = false; start_menu_hover = -1; }
+        needs_redraw = true;
+        return;
+      }
+
+      // Confirm dialog captures keys
+      if (confirm_dialog_open) {
+        if (key == '\r' || key == '\n') {
+          if (confirm_dialog_focus)
+            handle_confirm_dialog_yes();
+          else
+            confirm_dialog_close();
+        } else if (key == 'y' || key == 'Y') {
+          handle_confirm_dialog_yes();
+        } else if (key == 'n' || key == 'N') {
+          confirm_dialog_close();
+        }
         needs_redraw = true;
         return;
       }
@@ -2067,7 +2202,10 @@ void run() {
         }
         if (!is_seq) {
           // Escape key
-          if (input_dialog_open) {
+          if (confirm_dialog_open) {
+            confirm_dialog_close();
+            needs_redraw = true;
+          } else if (input_dialog_open) {
             input_dialog_close();
             needs_redraw = true;
           } else if (ctx_open) {

@@ -317,6 +317,47 @@ bool rm(const char *name) {
   return true;
 }
 
+bool rm_recursive(i32 node_idx) {
+  if (node_idx < 0 || node_idx >= static_cast<i32>(MAX_NODES) ||
+      !nodes[node_idx].used)
+    return false;
+
+  // Recursively delete children first
+  if (nodes[node_idx].type == NodeType::Directory) {
+    while (nodes[node_idx].child_count > 0) {
+      i32 child = nodes[node_idx].children[0];
+      rm_recursive(child);
+      // After recursive delete, remove child from parent's list
+      // (rm_recursive on a leaf marks it unused, but we need to update parent)
+      // If child is still in list (it was freed but not unlinked from parent),
+      // unlink it
+      if (nodes[node_idx].child_count > 0 &&
+          nodes[node_idx].children[0] == child) {
+        for (usize j = 0; j < nodes[node_idx].child_count - 1; j++)
+          nodes[node_idx].children[j] = nodes[node_idx].children[j + 1];
+        nodes[node_idx].child_count--;
+      }
+    }
+  }
+
+  // Remove from parent's children list
+  i32 par = nodes[node_idx].parent;
+  if (par >= 0 && nodes[par].used) {
+    auto &pdir = nodes[par];
+    for (usize i = 0; i < pdir.child_count; i++) {
+      if (pdir.children[i] == node_idx) {
+        for (usize j = i; j < pdir.child_count - 1; j++)
+          pdir.children[j] = pdir.children[j + 1];
+        pdir.child_count--;
+        break;
+      }
+    }
+  }
+
+  nodes[node_idx].used = false;
+  return true;
+}
+
 bool stat(const char *name) {
   i32 idx = find_child(cwd_index, name);
   if (idx < 0) {
