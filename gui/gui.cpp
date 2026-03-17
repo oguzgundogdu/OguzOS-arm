@@ -74,6 +74,7 @@ i32 active_window = -1;
 // Mouse state
 i32 mouse_x = 320, mouse_y = 240;
 bool prev_mouse_left = false;
+bool prev_mouse_right = false;
 
 // Drag state
 bool dragging = false;
@@ -203,6 +204,56 @@ void build_menu() {
 constexpr u32 COL_MENU_BG = 0x003A3A3A;
 constexpr u32 COL_MENU_HOVER = 0x004488CC;
 constexpr u32 COL_MENU_SEP = 0x00555555;
+
+// ── Context menu (right-click) ──────────────────────────────────────────────
+enum CtxAction {
+  CTX_NEW_FILE,
+  CTX_NEW_FOLDER,
+  CTX_DELETE,
+  CTX_OPEN,
+  CTX_OPEN_EXPLORER,
+  CTX_REFRESH,
+};
+
+struct CtxItem {
+  const char *label;
+  CtxAction action;
+  bool separator_after;
+};
+
+constexpr i32 CTX_MAX_ITEMS = 8;
+constexpr i32 CTX_ITEM_H = 24;
+constexpr i32 CTX_W = 160;
+constexpr u32 COL_CTX_BG = 0x00F5F5F5;
+constexpr u32 COL_CTX_HOVER = 0x003399FF;
+constexpr u32 COL_CTX_TEXT = 0x00202020;
+constexpr u32 COL_CTX_TEXT_H = 0x00FFFFFF;
+constexpr u32 COL_CTX_SEP = 0x00CCCCCC;
+constexpr u32 COL_CTX_BORDER = 0x00999999;
+
+bool ctx_open = false;
+i32 ctx_x = 0, ctx_y = 0;       // screen position of menu
+i32 ctx_hover = -1;              // hovered item
+i32 ctx_win = -1;                // which explorer window (-1 = desktop)
+CtxItem ctx_items[CTX_MAX_ITEMS];
+i32 ctx_count = 0;
+
+// Input dialog for New File / New Folder
+bool input_dialog_open = false;
+char input_dialog_title[64];
+char input_dialog_buf[64];
+i32 input_dialog_cursor = 0;
+CtxAction input_dialog_action = CTX_NEW_FILE;
+i32 input_dialog_win = -1;      // target explorer window
+
+void ctx_close() {
+  ctx_open = false;
+  ctx_hover = -1;
+}
+
+void input_dialog_close() {
+  input_dialog_open = false;
+}
 
 // Flag to signal exit from GUI loop
 bool should_exit = false;
@@ -884,6 +935,80 @@ void draw_start_menu() {
   }
 }
 
+void draw_context_menu() {
+  if (!ctx_open)
+    return;
+  i32 mfh = gfx::font_h();
+  i32 total_h = ctx_count * CTX_ITEM_H + 4;
+  // Adjust for separators
+  for (i32 i = 0; i < ctx_count; i++) {
+    if (ctx_items[i].separator_after)
+      total_h += 4;
+  }
+
+  // Background + border + shadow
+  gfx::fill_rect(ctx_x + 2, ctx_y + 2, CTX_W, total_h, 0x00444444);
+  gfx::fill_rect(ctx_x, ctx_y, CTX_W, total_h, COL_CTX_BG);
+  gfx::rect(ctx_x, ctx_y, CTX_W, total_h, COL_CTX_BORDER);
+
+  i32 iy = ctx_y + 2;
+  for (i32 i = 0; i < ctx_count; i++) {
+    bool hovered = (ctx_hover == i);
+    u32 bg = hovered ? COL_CTX_HOVER : COL_CTX_BG;
+    u32 fg = hovered ? COL_CTX_TEXT_H : COL_CTX_TEXT;
+    gfx::fill_rect(ctx_x + 1, iy, CTX_W - 2, CTX_ITEM_H, bg);
+    gfx::draw_text(ctx_x + 8, iy + (CTX_ITEM_H - mfh) / 2,
+                    ctx_items[i].label, fg, bg);
+    iy += CTX_ITEM_H;
+    if (ctx_items[i].separator_after) {
+      gfx::hline(ctx_x + 4, iy + 1, CTX_W - 8, COL_CTX_SEP);
+      iy += 4;
+    }
+  }
+}
+
+void draw_input_dialog() {
+  if (!input_dialog_open)
+    return;
+  i32 sw = static_cast<i32>(fb::width());
+  i32 sh = static_cast<i32>(fb::height());
+  i32 dw = 300, dh = 100;
+  i32 dx = (sw - dw) / 2;
+  i32 dy = (sh - dh) / 2;
+  i32 fh = gfx::font_h();
+  i32 fw = gfx::font_w();
+
+  // Shadow + background
+  gfx::fill_rect(dx + 3, dy + 3, dw, dh, 0x00333333);
+  gfx::fill_rect(dx, dy, dw, dh, 0x00F0F0F0);
+  gfx::rect(dx, dy, dw, dh, 0x00666666);
+
+  // Title bar
+  gfx::fill_rect(dx, dy, dw, 24, COL_WIN_TITLE);
+  gfx::draw_text(dx + 8, dy + (24 - fh) / 2, input_dialog_title,
+                  COL_TEXT_LIGHT, COL_WIN_TITLE);
+
+  // Label
+  gfx::draw_text(dx + 10, dy + 32, "Name:", COL_TEXT_DARK, 0x00F0F0F0);
+
+  // Text input field
+  i32 fx = dx + 10;
+  i32 fy = dy + 52;
+  i32 field_w = dw - 20;
+  gfx::fill_rect(fx, fy, field_w, fh + 6, 0x00FFFFFF);
+  gfx::rect(fx, fy, field_w, fh + 6, 0x00AAAAAA);
+  gfx::draw_text(fx + 4, fy + 3, input_dialog_buf, COL_TEXT_DARK, 0x00FFFFFF);
+
+  // Cursor blink
+  i32 cursor_x = fx + 4 + input_dialog_cursor * fw;
+  if (cursor_x < fx + field_w - 2)
+    gfx::fill_rect(cursor_x, fy + 2, 1, fh + 2, COL_TEXT_DARK);
+
+  // Hint
+  gfx::draw_text(dx + 10, dy + dh - fh - 6, "Enter=OK  Esc=Cancel",
+                  0x00888888, 0x00F0F0F0);
+}
+
 void render() {
   draw_desktop();
   for (i32 i = 0; i < window_count; i++) {
@@ -915,6 +1040,8 @@ void render() {
   }
   draw_taskbar();
   draw_start_menu();
+  draw_context_menu();
+  draw_input_dialog();
   draw_cursor();
 }
 
@@ -1010,8 +1137,197 @@ void handle_menu_click(i32 item) {
   }
 }
 
+// ── Context menu helpers ────────────────────────────────────────────────────
+void open_ctx_explorer(i32 win_idx, i32 x, i32 y) {
+  Window &win = windows[win_idx];
+  ctx_count = 0;
+  ctx_win = win_idx;
+
+  // Figure out if an item is selected under cursor
+  i32 dir_idx = fs::resolve(win.path);
+  const fs::Node *dir = fs::get_node(dir_idx);
+  bool has_selection = false;
+  bool sel_is_dotdot = false;
+  if (dir) {
+    bool has_dotdot = (dir_idx != 0);
+    if (has_dotdot && win.selected == 0) {
+      sel_is_dotdot = true;
+    } else {
+      i32 child_sel = has_dotdot ? (win.selected - 1) : win.selected;
+      if (child_sel >= 0 && child_sel < static_cast<i32>(dir->child_count))
+        has_selection = true;
+    }
+  }
+
+  if (has_selection && !sel_is_dotdot) {
+    ctx_items[ctx_count++] = {"Open", CTX_OPEN, false};
+    ctx_items[ctx_count++] = {"Delete", CTX_DELETE, true};
+  }
+  ctx_items[ctx_count++] = {"New File", CTX_NEW_FILE, false};
+  ctx_items[ctx_count++] = {"New Folder", CTX_NEW_FOLDER, true};
+  ctx_items[ctx_count++] = {"Refresh", CTX_REFRESH, false};
+
+  ctx_x = x;
+  ctx_y = y;
+
+  // Clamp to screen
+  i32 sw = static_cast<i32>(fb::width());
+  i32 sh = static_cast<i32>(fb::height());
+  i32 menu_h = ctx_count * CTX_ITEM_H + 4;
+  for (i32 i = 0; i < ctx_count; i++)
+    if (ctx_items[i].separator_after) menu_h += 4;
+  if (ctx_x + CTX_W > sw) ctx_x = sw - CTX_W;
+  if (ctx_y + menu_h > sh - TASKBAR_H) ctx_y = sh - TASKBAR_H - menu_h;
+  ctx_open = true;
+  ctx_hover = -1;
+}
+
+void open_ctx_desktop(i32 x, i32 y) {
+  ctx_count = 0;
+  ctx_win = -1;
+
+  ctx_items[ctx_count++] = {"Open Explorer", CTX_OPEN_EXPLORER, true};
+  ctx_items[ctx_count++] = {"New File", CTX_NEW_FILE, false};
+  ctx_items[ctx_count++] = {"New Folder", CTX_NEW_FOLDER, true};
+  ctx_items[ctx_count++] = {"Refresh", CTX_REFRESH, false};
+
+  ctx_x = x;
+  ctx_y = y;
+
+  i32 sw = static_cast<i32>(fb::width());
+  i32 sh = static_cast<i32>(fb::height());
+  i32 menu_h = ctx_count * CTX_ITEM_H + 4;
+  for (i32 i = 0; i < ctx_count; i++)
+    if (ctx_items[i].separator_after) menu_h += 4;
+  if (ctx_x + CTX_W > sw) ctx_x = sw - CTX_W;
+  if (ctx_y + menu_h > sh - TASKBAR_H) ctx_y = sh - TASKBAR_H - menu_h;
+  ctx_open = true;
+  ctx_hover = -1;
+}
+
+void open_input_dialog(CtxAction action, i32 win_idx) {
+  input_dialog_open = true;
+  input_dialog_action = action;
+  input_dialog_win = win_idx;
+  input_dialog_buf[0] = '\0';
+  input_dialog_cursor = 0;
+  if (action == CTX_NEW_FILE)
+    str::cpy(input_dialog_title, "New File");
+  else
+    str::cpy(input_dialog_title, "New Folder");
+}
+
+void handle_ctx_action(i32 item) {
+  if (item < 0 || item >= ctx_count)
+    return;
+  CtxAction action = ctx_items[item].action;
+  ctx_close();
+
+  switch (action) {
+  case CTX_NEW_FILE:
+  case CTX_NEW_FOLDER:
+    open_input_dialog(action, ctx_win);
+    break;
+
+  case CTX_DELETE: {
+    if (ctx_win < 0 || ctx_win >= window_count)
+      break;
+    Window &win = windows[ctx_win];
+    i32 dir_idx = fs::resolve(win.path);
+    const fs::Node *dir = fs::get_node(dir_idx);
+    if (!dir) break;
+    bool has_dotdot = (dir_idx != 0);
+    i32 child_sel = has_dotdot ? (win.selected - 1) : win.selected;
+    if (child_sel < 0 || child_sel >= static_cast<i32>(dir->child_count))
+      break;
+    i32 ci = dir->children[child_sel];
+    const fs::Node *child = fs::get_node(ci);
+    if (!child) break;
+
+    // cd to directory, rm, cd back
+    char old_cwd[256];
+    fs::get_cwd(old_cwd, sizeof(old_cwd));
+    fs::cd(win.path);
+    if (fs::rm(child->name)) {
+      syslog::info("gui", "deleted: %s", child->name);
+      fs::sync_to_disk();
+      if (win.selected > 0) win.selected--;
+    }
+    fs::cd(old_cwd);
+    break;
+  }
+
+  case CTX_OPEN: {
+    if (ctx_win < 0 || ctx_win >= window_count)
+      break;
+    explorer_activate(windows[ctx_win]);
+    break;
+  }
+
+  case CTX_OPEN_EXPLORER:
+    open_explorer("/");
+    break;
+
+  case CTX_REFRESH:
+    // Just triggers a redraw
+    break;
+  }
+}
+
+void handle_input_dialog_confirm() {
+  if (input_dialog_buf[0] == '\0') {
+    input_dialog_close();
+    return;
+  }
+
+  char target_path[256];
+  if (input_dialog_win >= 0 && input_dialog_win < window_count) {
+    str::ncpy(target_path, windows[input_dialog_win].path, 255);
+  } else {
+    str::cpy(target_path, "/home");
+  }
+
+  char old_cwd[256];
+  fs::get_cwd(old_cwd, sizeof(old_cwd));
+  fs::cd(target_path);
+
+  bool ok = false;
+  if (input_dialog_action == CTX_NEW_FILE) {
+    ok = fs::touch(input_dialog_buf);
+    if (ok) syslog::info("gui", "created file: %s/%s", target_path, input_dialog_buf);
+  } else if (input_dialog_action == CTX_NEW_FOLDER) {
+    ok = fs::mkdir(input_dialog_buf);
+    if (ok) syslog::info("gui", "created folder: %s/%s", target_path, input_dialog_buf);
+  }
+
+  if (ok)
+    fs::sync_to_disk();
+
+  fs::cd(old_cwd);
+  input_dialog_close();
+}
+
 // Mouse-down: focus, drag start, resize start, selection (no destructive actions)
 void handle_mouse_down(i32 x, i32 y) {
+  // Input dialog eats all clicks outside itself
+  if (input_dialog_open)
+    return;
+
+  // Context menu handling
+  if (ctx_open) {
+    // Check if click is inside context menu
+    i32 total_h = ctx_count * CTX_ITEM_H + 4;
+    for (i32 ci = 0; ci < ctx_count; ci++)
+      if (ctx_items[ci].separator_after) total_h += 4;
+    if (x >= ctx_x && x < ctx_x + CTX_W &&
+        y >= ctx_y && y < ctx_y + total_h) {
+      // Click inside — action on release
+      return;
+    }
+    // Click outside — close
+    ctx_close();
+  }
+
   i32 sh = static_cast<i32>(fb::height());
 
   // Press inside open start menu — just record, action on release
@@ -1137,6 +1453,9 @@ void handle_mouse_down(i32 x, i32 y) {
 
 // Mouse-up: trigger actions (close, menu, taskbar)
 void handle_mouse_up(i32 x, i32 y) {
+  if (input_dialog_open)
+    return;
+
   i32 sh = static_cast<i32>(fb::height());
 
   // Was it a drag? If the mouse moved far from press point, skip actions
@@ -1146,6 +1465,22 @@ void handle_mouse_up(i32 x, i32 y) {
 
   if (was_drag)
     return;
+
+  // Context menu click
+  if (ctx_open) {
+    i32 iy = ctx_y + 2;
+    for (i32 ci = 0; ci < ctx_count; ci++) {
+      if (x >= ctx_x && x < ctx_x + CTX_W &&
+          y >= iy && y < iy + CTX_ITEM_H) {
+        handle_ctx_action(ci);
+        return;
+      }
+      iy += CTX_ITEM_H;
+      if (ctx_items[ci].separator_after) iy += 4;
+    }
+    ctx_close();
+    return;
+  }
 
   // Start menu item
   if (start_menu_open) {
@@ -1365,8 +1700,11 @@ void run() {
   resizing = false;
   scrollbar_dragging = false;
   prev_mouse_left = false;
+  prev_mouse_right = false;
   start_menu_open = false;
   start_menu_hover = -1;
+  ctx_open = false;
+  input_dialog_open = false;
   should_exit = false;
 
   gfx::init();
@@ -1535,7 +1873,75 @@ void run() {
         }
       }
 
+      // Context menu hover tracking
+      if (ctx_open) {
+        i32 total_h = 2; // top padding
+        for (i32 ci = 0; ci < ctx_count; ci++) {
+          i32 item_top = ctx_y + total_h;
+          total_h += CTX_ITEM_H;
+          if (ctx_items[ci].separator_after) total_h += 4;
+          if (mx >= ctx_x && mx < ctx_x + CTX_W &&
+              my >= item_top && my < item_top + CTX_ITEM_H) {
+            if (ctx_hover != ci) { ctx_hover = ci; needs_redraw = true; }
+            goto ctx_hover_done;
+          }
+        }
+        if (ctx_hover != -1) { ctx_hover = -1; needs_redraw = true; }
+        ctx_hover_done:;
+      }
+
+      // Right-click: open context menu
+      if (mr && !prev_mouse_right) {
+        // Close any existing menus
+        start_menu_open = false;
+        ctx_close();
+
+        i32 scr_h = static_cast<i32>(fb::height());
+
+        // Don't open on taskbar
+        if (my < scr_h - TASKBAR_H) {
+          // Check if right-click is inside an explorer window content area
+          bool handled = false;
+          for (i32 wi = window_count - 1; wi >= 0; wi--) {
+            Window &win = windows[wi];
+            if (!win.visible || win.minimized) continue;
+            if (mx >= win.x && mx < win.x + win.w &&
+                my >= win.y + TITLEBAR_H && my < win.y + win.h &&
+                win.type == WIN_EXPLORER) {
+              bring_to_front(wi);
+              // Select the item under cursor
+              Window &ew = windows[window_count - 1];
+              i32 exp_pad = 6;
+              i32 exp_path_h = gfx::font_h() + 6;
+              i32 exp_item_h = gfx::font_h() + 6;
+              i32 list_top = ew.y + TITLEBAR_H + exp_pad + exp_path_h + 4;
+              i32 local_y = my - list_top;
+              if (local_y >= 0) {
+                i32 clicked_item = ew.scroll + local_y / exp_item_h;
+                i32 total = explorer_item_count(ew);
+                if (clicked_item >= 0 && clicked_item < total)
+                  ew.selected = clicked_item;
+              }
+              open_ctx_explorer(window_count - 1, mx, my);
+              handled = true;
+              break;
+            }
+            // If click is inside any other window, don't show desktop menu
+            if (mx >= win.x && mx < win.x + win.w &&
+                my >= win.y && my < win.y + win.h) {
+              handled = true;
+              break;
+            }
+          }
+          // Right-click on desktop
+          if (!handled)
+            open_ctx_desktop(mx, my);
+          needs_redraw = true;
+        }
+      }
+
       prev_mouse_left = ml;
+      prev_mouse_right = mr;
     }
 
     // ── Helper: handle arrow key ──────────────────────────────────────
@@ -1572,6 +1978,33 @@ void run() {
 
     // ── Helper: handle regular key ──────────────────────────────────
     auto handle_key = [&](char key) {
+      // Escape from virtio keyboard
+      if (key == 0x1B) {
+        if (input_dialog_open) input_dialog_close();
+        else if (ctx_open) ctx_close();
+        else if (start_menu_open) { start_menu_open = false; start_menu_hover = -1; }
+        needs_redraw = true;
+        return;
+      }
+
+      // Input dialog captures all keys when open
+      if (input_dialog_open) {
+        if (key == '\r' || key == '\n') {
+          handle_input_dialog_confirm();
+        } else if (key == 0x7F || key == '\b') {
+          // Backspace
+          if (input_dialog_cursor > 0) {
+            input_dialog_cursor--;
+            input_dialog_buf[input_dialog_cursor] = '\0';
+          }
+        } else if (key >= 32 && key <= 126 && input_dialog_cursor < 62) {
+          input_dialog_buf[input_dialog_cursor++] = key;
+          input_dialog_buf[input_dialog_cursor] = '\0';
+        }
+        needs_redraw = true;
+        return;
+      }
+
       if (key == '\t') {
         if (window_count > 1) {
           bring_to_front(0);
@@ -1633,7 +2066,14 @@ void run() {
           }
         }
         if (!is_seq) {
-          if (start_menu_open) {
+          // Escape key
+          if (input_dialog_open) {
+            input_dialog_close();
+            needs_redraw = true;
+          } else if (ctx_open) {
+            ctx_close();
+            needs_redraw = true;
+          } else if (start_menu_open) {
             start_menu_open = false;
             start_menu_hover = -1;
             needs_redraw = true;
