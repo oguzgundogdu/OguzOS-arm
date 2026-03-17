@@ -1,4 +1,5 @@
 #include "csharp.h"
+#include "graphics.h"
 #include "string.h"
 
 namespace {
@@ -92,6 +93,26 @@ bool had_return;
 Value return_val;
 
 i32 call_depth;
+
+// ── GUI state ───────────────────────────────────────────────────────────────
+bool gui_mode = false;
+bool close_requested = false;
+i32 draw_cx, draw_cy, draw_cw, draw_ch; // current draw context
+
+void gfx_line(i32 x1, i32 y1, i32 x2, i32 y2, u32 color) {
+  i32 dx = x2 - x1; if (dx < 0) dx = -dx;
+  i32 dy = y2 - y1; if (dy < 0) dy = -dy;
+  i32 sx = x1 < x2 ? 1 : -1;
+  i32 sy = y1 < y2 ? 1 : -1;
+  i32 err = dx - dy;
+  while (true) {
+    gfx::pixel(x1, y1, color);
+    if (x1 == x2 && y1 == y2) break;
+    i32 e2 = 2 * err;
+    if (e2 > -dy) { err -= dy; x1 += sx; }
+    if (e2 < dx) { err += dx; y1 += sy; }
+  }
+}
 
 // ── Output helpers ──────────────────────────────────────────────────────────
 void emit(const char *s) {
@@ -398,6 +419,91 @@ Value parse_primary() {
       }
       expect(T_RPAREN);
       return make_void();
+    }
+
+    // Gfx.* drawing API
+    if (str::cmp(name, "Gfx") == 0 && match(T_DOT)) {
+      char method[32];
+      tok_text(cur(), method, 32);
+      tp++;
+      expect(T_LPAREN);
+
+      if (str::cmp(method, "Clear") == 0) {
+        Value c = parse_expr();
+        if (gui_mode)
+          gfx::fill_rect(draw_cx, draw_cy, draw_cw, draw_ch, static_cast<u32>(c.ival));
+      } else if (str::cmp(method, "FillRect") == 0) {
+        Value x = parse_expr(); expect(T_COMMA);
+        Value y = parse_expr(); expect(T_COMMA);
+        Value w = parse_expr(); expect(T_COMMA);
+        Value h = parse_expr(); expect(T_COMMA);
+        Value c = parse_expr();
+        if (gui_mode)
+          gfx::fill_rect(draw_cx + x.ival, draw_cy + y.ival, w.ival, h.ival, static_cast<u32>(c.ival));
+      } else if (str::cmp(method, "Rect") == 0) {
+        Value x = parse_expr(); expect(T_COMMA);
+        Value y = parse_expr(); expect(T_COMMA);
+        Value w = parse_expr(); expect(T_COMMA);
+        Value h = parse_expr(); expect(T_COMMA);
+        Value c = parse_expr();
+        if (gui_mode)
+          gfx::rect(draw_cx + x.ival, draw_cy + y.ival, w.ival, h.ival, static_cast<u32>(c.ival));
+      } else if (str::cmp(method, "DrawText") == 0) {
+        Value x = parse_expr(); expect(T_COMMA);
+        Value y = parse_expr(); expect(T_COMMA);
+        Value t = parse_expr(); expect(T_COMMA);
+        Value c = parse_expr();
+        if (gui_mode)
+          gfx::draw_text_nobg(draw_cx + x.ival, draw_cy + y.ival, t.sval, static_cast<u32>(c.ival));
+      } else if (str::cmp(method, "Pixel") == 0) {
+        Value x = parse_expr(); expect(T_COMMA);
+        Value y = parse_expr(); expect(T_COMMA);
+        Value c = parse_expr();
+        if (gui_mode)
+          gfx::pixel(draw_cx + x.ival, draw_cy + y.ival, static_cast<u32>(c.ival));
+      } else if (str::cmp(method, "Line") == 0) {
+        Value x1 = parse_expr(); expect(T_COMMA);
+        Value y1 = parse_expr(); expect(T_COMMA);
+        Value x2 = parse_expr(); expect(T_COMMA);
+        Value y2 = parse_expr(); expect(T_COMMA);
+        Value c = parse_expr();
+        if (gui_mode)
+          gfx_line(draw_cx + x1.ival, draw_cy + y1.ival,
+                   draw_cx + x2.ival, draw_cy + y2.ival, static_cast<u32>(c.ival));
+      } else if (str::cmp(method, "HLine") == 0) {
+        Value x = parse_expr(); expect(T_COMMA);
+        Value y = parse_expr(); expect(T_COMMA);
+        Value w = parse_expr(); expect(T_COMMA);
+        Value c = parse_expr();
+        if (gui_mode)
+          gfx::hline(draw_cx + x.ival, draw_cy + y.ival, w.ival, static_cast<u32>(c.ival));
+      } else {
+        error("unknown Gfx method");
+      }
+      expect(T_RPAREN);
+      return make_void();
+    }
+
+    // App.* window API
+    if (str::cmp(name, "App") == 0 && match(T_DOT)) {
+      char method[32];
+      tok_text(cur(), method, 32);
+      tp++;
+
+      if (str::cmp(method, "Close") == 0) {
+        expect(T_LPAREN); expect(T_RPAREN);
+        close_requested = true;
+        return make_void();
+      } else if (str::cmp(method, "Width") == 0) {
+        expect(T_LPAREN); expect(T_RPAREN);
+        return make_int(draw_cw);
+      } else if (str::cmp(method, "Height") == 0) {
+        expect(T_LPAREN); expect(T_RPAREN);
+        return make_int(draw_ch);
+      } else {
+        error("unknown App method");
+        return make_void();
+      }
     }
 
     // Function call
@@ -913,36 +1019,73 @@ void scan_functions() {
   }
 }
 
+// Shared output buffer for GUI mode (Console.WriteLine still works)
+char gui_out_buf[256];
+
+// Helper to call a function by pointer with optional int args
+void call_func(Func *fn, i32 arg0 = 0, i32 arg1 = 0) {
+  if (!fn || had_error) return;
+
+  i32 saved_tp = tp;
+  i32 saved_var_count = var_count;
+  i32 saved_scope = scope_depth;
+  bool saved_return = had_return;
+  Value saved_retval = return_val;
+
+  scope_depth++;
+  call_depth++;
+  had_return = false;
+  return_val = make_void();
+
+  // Push parameters
+  for (i32 i = 0; i < fn->param_count && i < 2; i++) {
+    Value v = make_int(i == 0 ? arg0 : arg1);
+    add_var(fn->params[i], v);
+  }
+
+  tp = fn->tok_start;
+  exec_block();
+
+  call_depth--;
+  var_count = saved_var_count;
+  scope_depth = saved_scope;
+  tp = saved_tp;
+  had_return = saved_return;
+  return_val = saved_retval;
+}
+
+void reset_state() {
+  tok_count = 0;
+  tp = 0;
+  var_count = 0;
+  scope_depth = 0;
+  func_count = 0;
+  had_error = false;
+  had_return = false;
+  return_val = make_void();
+  call_depth = 0;
+  gui_mode = false;
+  close_requested = false;
+  draw_cx = draw_cy = draw_cw = draw_ch = 0;
+}
+
 } // anonymous namespace
 
 // ── Public API ──────────────────────────────────────────────────────────────
 namespace csharp {
 
 bool run(const char *source, char *out_buf, i32 out_size) {
-  // Reset state
   src = source;
-  tok_count = 0;
-  tp = 0;
-  var_count = 0;
-  scope_depth = 0;
-  func_count = 0;
+  reset_state();
   out = out_buf;
   out_cap = out_size;
   out_len = 0;
   out[0] = '\0';
-  had_error = false;
-  had_return = false;
-  return_val = make_void();
-  call_depth = 0;
 
-  // Tokenize
   if (!tokenize()) return false;
-
-  // First pass: find functions
   scan_functions();
   if (had_error) return false;
 
-  // Find and execute Main
   Func *main_fn = find_func("Main");
   if (!main_fn) {
     error("no Main method found");
@@ -951,8 +1094,77 @@ bool run(const char *source, char *out_buf, i32 out_size) {
 
   tp = main_fn->tok_start;
   exec_block();
+  return !had_error;
+}
+
+// ── GUI mode API ────────────────────────────────────────────────────────────
+bool init(const char *source) {
+  src = source;
+  reset_state();
+  gui_mode = true;
+  out = gui_out_buf;
+  out_cap = sizeof(gui_out_buf);
+  out_len = 0;
+  out[0] = '\0';
+
+  if (!tokenize()) return false;
+  scan_functions();
+  if (had_error) return false;
+
+  // Execute Main() if it exists (for variable initialization)
+  Func *main_fn = find_func("Main");
+  if (main_fn) {
+    tp = main_fn->tok_start;
+    exec_block();
+    had_return = false; // reset for callbacks
+  }
 
   return !had_error;
+}
+
+bool has_func(const char *name) {
+  return find_func(name) != nullptr;
+}
+
+void set_draw_ctx(i32 cx, i32 cy, i32 cw, i32 ch) {
+  draw_cx = cx; draw_cy = cy; draw_cw = cw; draw_ch = ch;
+}
+
+void call_draw() {
+  Func *fn = find_func("OnDraw");
+  if (fn) call_func(fn, draw_cw, draw_ch);
+}
+
+void call_click(i32 x, i32 y) {
+  Func *fn = find_func("OnClick");
+  if (fn) call_func(fn, x, y);
+}
+
+bool call_key(char key) {
+  Func *fn = find_func("OnKey");
+  if (!fn) return false;
+  call_func(fn, static_cast<i32>(key), 0);
+  return true;
+}
+
+void call_arrow(char dir) {
+  Func *fn = find_func("OnArrow");
+  if (!fn) return;
+  i32 d = 0;
+  if (dir == 'A') d = 0; // up
+  else if (dir == 'B') d = 1; // down
+  else if (dir == 'C') d = 2; // right
+  else if (dir == 'D') d = 3; // left
+  call_func(fn, d, 0);
+}
+
+bool should_close() { return close_requested; }
+
+void gui_cleanup() {
+  gui_mode = false;
+  close_requested = false;
+  var_count = 0;
+  func_count = 0;
 }
 
 } // namespace csharp

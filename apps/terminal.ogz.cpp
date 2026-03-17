@@ -609,6 +609,14 @@ void term_exec(TermState *s) {
   } else if (str::cmp(p, "which") == 0) {
     if (*arg == '\0') term_append(s, "usage: which <cmd>\n");
     else cmd::which(term_out, s, arg);
+  } else if (str::cmp(p, "csgui") == 0) {
+    if (*arg == '\0') { term_append(s, "usage: csgui <file.cs>\n"); }
+    else {
+      char fullpath[256];
+      if (arg[0] == '/') { str::ncpy(fullpath, arg, 255); }
+      else { str::ncpy(fullpath, s->cwd, 255); if (str::len(fullpath) > 1) str::cat(fullpath, "/"); str::cat(fullpath, arg); }
+      cmd::csgui(term_out, s, fullpath);
+    }
   } else if (str::cmp(p, "csrun") == 0) {
     if (*arg == '\0') { term_append(s, "usage: csrun <file.cs>\n"); }
     else {
@@ -767,6 +775,13 @@ void terminal_open_file(u8 *state, const char *path, const char *content) {
   // Check if this is a .cs file → auto-run with csrun
   if (path) {
     usize plen = str::len(path);
+    // .csg files → launch as GUI app
+    if (plen > 4 && str::cmp(path + plen - 4, ".csg") == 0) {
+      // Open as GUI app via file association
+      gui::open_file(path, content);
+      return;
+    }
+    // .cs files → run as console app
     if (plen > 3 && str::cmp(path + plen - 3, ".cs") == 0) {
       str::cpy(s->cmd, "csrun ");
       str::ncpy(s->cmd + 6, path, 193);

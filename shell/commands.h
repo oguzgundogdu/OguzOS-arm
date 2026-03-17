@@ -26,6 +26,7 @@ void grep(OutFn out, void *ctx, const char *pattern, const char *file);
 
 // C# interpreter
 void csrun(OutFn out, void *ctx, const char *filepath);
+void csgui(OutFn out, void *ctx, const char *filepath);
 
 // System info
 void date(OutFn out, void *ctx);

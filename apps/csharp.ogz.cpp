@@ -273,7 +273,7 @@ void csharp_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
   gfx::draw_text(cx + 4, status_y + 3, status, COL_STATUS_TEXT, COL_STATUS);
 
   // Run button hint
-  const char *hint = "F5 Run  Ctrl+S Save";
+  const char *hint = "F5 Run  F6 GUI  Ctrl+S Save";
   i32 hw = gfx::text_width(hint);
   gfx::draw_text(cx + cw - hw - 4, status_y + 3, hint, COL_RUN_BTN, COL_STATUS);
 
@@ -296,7 +296,7 @@ void csharp_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
       }
     }
   } else {
-    gfx::draw_text(cx + 4, out_y + 2, "Press F5 to run", COL_COMMENT, COL_OUT_BG);
+    gfx::draw_text(cx + 4, out_y + 2, "F5=Console  F6=GUI App", COL_COMMENT, COL_OUT_BG);
   }
 
   // ── Editor ──
@@ -424,6 +424,37 @@ bool csharp_key(u8 *state, char key) {
     s->ran_ok = csharp::run(s->src, s->output, OUT_MAX);
     s->has_output = true;
     s->out_scroll = 0;
+    return true;
+  }
+
+  // F6 / Ctrl+G = Run as GUI App
+  if (key == 0x07) {
+    // Save to a .csg path so file association opens csgui.ogz
+    char gui_path[128];
+    if (s->filepath[0]) {
+      str::ncpy(gui_path, s->filepath, 127);
+      // Replace .cs with .csg if needed
+      usize pl = str::len(gui_path);
+      if (pl > 3 && str::cmp(gui_path + pl - 3, ".cs") == 0) {
+        gui_path[pl] = 'g';
+        gui_path[pl + 1] = '\0';
+      }
+    } else {
+      str::cpy(gui_path, "/tmp/app.csg");
+    }
+
+    // Save source to the .csg file
+    char dir[128], name[64];
+    split_path(gui_path, dir, sizeof(dir), name, sizeof(name));
+    char old_cwd[256]; fs::get_cwd(old_cwd, sizeof(old_cwd));
+    fs::cd(dir); fs::touch(name); fs::write(name, s->src);
+    fs::sync_to_disk(); fs::cd(old_cwd);
+
+    // Launch via file association (.csg → csgui.ogz)
+    gui::open_file(gui_path, s->src);
+    s->has_output = true;
+    s->ran_ok = true;
+    str::cpy(s->output, "GUI app launched.\n");
     return true;
   }
 

@@ -1,6 +1,7 @@
 #include "commands.h"
 #include "csharp.h"
 #include "disk.h"
+#include "gui.h"
 #include "env.h"
 #include "fs.h"
 #include "net.h"
@@ -535,6 +536,30 @@ void csrun(OutFn out, void *ctx, const char *filepath) {
 
   if (!ok && output[0] == '\0')
     out(ctx, "csrun: execution failed\n");
+}
+
+void csgui(OutFn out, void *ctx, const char *filepath) {
+  if (!filepath || filepath[0] == '\0') {
+    out(ctx, "usage: csgui <file.cs>\n");
+    return;
+  }
+
+  i32 idx = fs::resolve(filepath);
+  if (idx < 0) {
+    out(ctx, "csgui: file not found: ");
+    out(ctx, filepath);
+    out(ctx, "\n");
+    return;
+  }
+
+  const fs::Node *node = fs::get_node(idx);
+  if (!node || node->type != fs::NodeType::File) {
+    out(ctx, "csgui: not a file\n");
+    return;
+  }
+
+  out(ctx, "Launching GUI app...\n");
+  gui::open_file(filepath, node->content);
 }
 
 } // namespace cmd
