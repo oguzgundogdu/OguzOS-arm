@@ -36,6 +36,9 @@ struct CSharpState {
   bool saveas_open;
   char saveas_buf[64];
   i32 saveas_cursor;
+  // Template chooser
+  bool show_template; // true when IDE just opened, no file loaded
+  i32 template_sel;   // 0 = Console App, 1 = Window App
 };
 
 static_assert(sizeof(CSharpState) <= 4096, "CSharpState too large");
@@ -218,18 +221,55 @@ u32 get_char_color(const char *text, i32 len, i32 pos) {
   return COL_TEXT;
 }
 
-// ── Callbacks ───────────────────────────────────────────────────────────────
-const char *DEFAULT_SRC =
+// ── Templates ───────────────────────────────────────────────────────────────
+const char *TPL_CONSOLE =
   "using System;\n\nclass Program {\n    static void Main() {\n"
   "        Console.WriteLine(\"Hello, OguzOS!\");\n\n"
   "        for (int i = 1; i <= 5; i++) {\n"
   "            Console.WriteLine(\"Count: \" + i);\n"
   "        }\n    }\n}\n";
 
+const char *TPL_WINDOW =
+  "using System;\n\nclass MyApp {\n"
+  "    static Button btn;\n    static Label lbl;\n"
+  "    static TextBox txt;\n    static CheckBox chk;\n\n"
+  "    static void Main() {\n"
+  "        lbl = new Label(20, 15, \"My First App\");\n"
+  "        txt = new TextBox(20, 40, 200, 24);\n"
+  "        btn = new Button(20, 80, 120, 30, \"Click Me\");\n"
+  "        chk = new CheckBox(20, 125, \"Dark Mode\");\n"
+  "    }\n\n"
+  "    static void OnDraw(int w, int h) {\n"
+  "        Gfx.Clear(0xF0F0F0);\n"
+  "        Gfx.Rect(0, 0, w, h, 0x999999);\n"
+  "        lbl.Draw();\n        txt.Draw();\n"
+  "        btn.Draw();\n        chk.Draw();\n"
+  "    }\n\n"
+  "    static void OnClick(int x, int y) {\n"
+  "        if (btn.HitTest(x, y)) {\n"
+  "            lbl.SetText(\"Hello, \" + txt.GetText() + \"!\");\n"
+  "        }\n"
+  "        if (chk.HitTest(x, y)) {\n"
+  "            chk.Toggle();\n"
+  "        }\n"
+  "        txt.Click(x, y);\n"
+  "    }\n\n"
+  "    static void OnKey(int key) {\n"
+  "        txt.Key(key);\n"
+  "    }\n}\n";
+
+constexpr i32 TPL_COUNT = 2;
+const char *TPL_NAMES[] = {"Console App (.cs)", "Window App (.csg)"};
+const char *TPL_DESCS[] = {
+  "Command-line program with\nConsole.WriteLine output.\nRun with F5.",
+  "GUI application with windows,\nbuttons, labels, and text input.\nRun with F6."
+};
+
+// ── Callbacks ───────────────────────────────────────────────────────────────
 void csharp_open(u8 *state) {
   auto *s = reinterpret_cast<CSharpState *>(state);
-  str::ncpy(s->src, DEFAULT_SRC, SRC_MAX - 1);
-  s->src_len = static_cast<i32>(str::len(s->src));
+  s->src[0] = '\0';
+  s->src_len = 0;
   s->cursor = 0;
   s->scroll_y = 0;
   s->sel_start = -1;
@@ -243,10 +283,76 @@ void csharp_open(u8 *state) {
   s->saveas_open = false;
   s->saveas_buf[0] = '\0';
   s->saveas_cursor = 0;
+  s->show_template = true;
+  s->template_sel = 0;
 }
 
 void csharp_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
   auto *s = reinterpret_cast<CSharpState *>(state);
+
+  // ── Template chooser screen ──
+  if (s->show_template) {
+    i32 fw = gfx::font_w(), fh = gfx::font_h();
+    gfx::fill_rect(cx, cy, cw, ch, 0x001E1E2E);
+
+    // Title
+    const char *title = "Create New Project";
+    i32 tw = gfx::text_width(title);
+    gfx::draw_text(cx + (cw - tw) / 2, cy + 20, title, 0x0089B4FA, 0x001E1E2E);
+
+    // Template cards
+    i32 card_w = 280, card_h = 100, card_gap = 20;
+    i32 total_w = TPL_COUNT * card_w + (TPL_COUNT - 1) * card_gap;
+    i32 start_x = cx + (cw - total_w) / 2;
+    i32 card_y = cy + 60;
+
+    for (i32 i = 0; i < TPL_COUNT; i++) {
+      i32 card_x = start_x + i * (card_w + card_gap);
+      bool sel = (s->template_sel == i);
+      u32 bg = sel ? 0x00313244 : 0x00232336;
+      u32 border = sel ? 0x0089B4FA : 0x00585B70;
+
+      gfx::fill_rect(card_x, card_y, card_w, card_h, bg);
+      gfx::rect(card_x, card_y, card_w, card_h, border);
+      if (sel) gfx::rect(card_x - 1, card_y - 1, card_w + 2, card_h + 2, border);
+
+      // Icon (simple)
+      if (i == 0) {
+        // Console icon: ">_"
+        gfx::fill_rect(card_x + 12, card_y + 12, 36, 28, 0x00181825);
+        gfx::draw_text(card_x + 15, card_y + 17, ">_", 0x00A6E3A1, 0x00181825);
+      } else {
+        // Window icon
+        gfx::fill_rect(card_x + 12, card_y + 12, 36, 28, 0x00585B70);
+        gfx::fill_rect(card_x + 12, card_y + 12, 36, 8, 0x0089B4FA);
+        gfx::fill_rect(card_x + 40, card_y + 13, 6, 6, 0x00F38BA8);
+      }
+
+      // Name
+      gfx::draw_text(card_x + 56, card_y + 14, TPL_NAMES[i],
+                      sel ? 0x00CDD6F4 : 0x00A6ADC8, bg);
+
+      // Description (multi-line)
+      const char *desc = TPL_DESCS[i];
+      i32 dy = card_y + 36;
+      i32 dx = card_x + 14;
+      while (*desc && dy + fh < card_y + card_h - 4) {
+        if (*desc == '\n') { dy += fh + 2; dx = card_x + 14; desc++; continue; }
+        if (dx + fw <= card_x + card_w - 8) {
+          gfx::draw_char(dx, dy, *desc, 0x006C7086, bg);
+          dx += fw;
+        }
+        desc++;
+      }
+    }
+
+    // Hint
+    const char *hint = "Left/Right to select, Enter to create";
+    i32 hw = gfx::text_width(hint);
+    gfx::draw_text(cx + (cw - hw) / 2, card_y + card_h + 20,
+                    hint, 0x006C7086, 0x001E1E2E);
+    return;
+  }
 
   i32 fw = gfx::font_w(), fh = gfx::font_h(), LH = fh + 2;
   i32 LNW = fw * 4;
@@ -380,8 +486,28 @@ void csharp_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
   }
 }
 
+void apply_template(CSharpState *s, i32 tpl) {
+  const char *code = (tpl == 0) ? TPL_CONSOLE : TPL_WINDOW;
+  str::ncpy(s->src, code, SRC_MAX - 1);
+  s->src_len = static_cast<i32>(str::len(s->src));
+  s->cursor = 0;
+  s->scroll_y = 0;
+  s->sel_start = -1;
+  s->dirty = false;
+  s->show_template = false;
+}
+
 bool csharp_key(u8 *state, char key) {
   auto *s = reinterpret_cast<CSharpState *>(state);
+
+  // Template chooser
+  if (s->show_template) {
+    if (key == '\r' || key == '\n') {
+      apply_template(s, s->template_sel);
+      return true;
+    }
+    return true; // eat all other keys, arrows handled in csharp_arrow
+  }
 
   // Save As dialog
   if (s->saveas_open) {
@@ -526,6 +652,14 @@ bool csharp_key(u8 *state, char key) {
 
 void csharp_arrow(u8 *state, char dir) {
   auto *s = reinterpret_cast<CSharpState *>(state);
+
+  // Template chooser: left/right to switch
+  if (s->show_template) {
+    if (dir == 'C' && s->template_sel < TPL_COUNT - 1) s->template_sel++;
+    else if (dir == 'D' && s->template_sel > 0) s->template_sel--;
+    return;
+  }
+
   s->sel_start = -1;
   if (dir == 'C' && s->cursor < s->src_len) s->cursor++;
   else if (dir == 'D' && s->cursor > 0) s->cursor--;
@@ -558,8 +692,27 @@ void csharp_arrow(u8 *state, char dir) {
 
 void csharp_close(u8 *) {}
 
-void csharp_click(u8 *state, i32 rx, i32 ry, i32 /*cw*/, i32 ch) {
+void csharp_click(u8 *state, i32 rx, i32 ry, i32 cw, i32 ch) {
   auto *s = reinterpret_cast<CSharpState *>(state);
+
+  // Template chooser: click on a card to select + create
+  if (s->show_template) {
+    i32 card_w = 280, card_h = 100, card_gap = 20;
+    i32 total_w = TPL_COUNT * card_w + (TPL_COUNT - 1) * card_gap;
+    i32 start_x = (cw - total_w) / 2;
+    i32 card_y = 60;
+    for (i32 i = 0; i < TPL_COUNT; i++) {
+      i32 card_x = start_x + i * (card_w + card_gap);
+      if (rx >= card_x && rx < card_x + card_w &&
+          ry >= card_y && ry < card_y + card_h) {
+        s->template_sel = i;
+        apply_template(s, i);
+        return;
+      }
+    }
+    return;
+  }
+
   if (s->saveas_open) return;
   i32 fh = gfx::font_h(), STATUS_H = fh + 6, SPLIT_H = 4;
   i32 editor_h = (ch - STATUS_H - SPLIT_H) * 6 / 10;
@@ -608,6 +761,7 @@ void csharp_open_file(u8 *state, const char *path, const char *content) {
   s->cursor = 0; s->scroll_y = 0; s->dirty = false;
   s->sel_start = -1;
   s->output[0] = '\0'; s->has_output = false;
+  s->show_template = false; // skip template chooser when opening a file
 }
 
 const OgzApp csharp_app = {

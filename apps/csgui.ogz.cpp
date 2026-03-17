@@ -82,11 +82,17 @@ void csgui_open_file(u8 *state, const char *path, const char *content) {
   str::ncpy(s->filepath, path, 127);
 
   // Load and initialize the C# program
+  syslog::info("csgui", "init source len=%d", static_cast<i32>(str::len(content)));
   if (!csharp::init(content)) {
     s->error = true;
     str::cpy(s->error_msg, "Failed to initialize program");
+    syslog::error("csgui", "init failed");
     return;
   }
+
+  syslog::info("csgui", "has OnDraw=%d has Main=%d",
+               csharp::has_func("OnDraw") ? 1 : 0,
+               csharp::has_func("Main") ? 1 : 0);
 
   if (!csharp::has_func("OnDraw")) {
     s->error = true;
