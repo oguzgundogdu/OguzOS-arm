@@ -31,9 +31,10 @@ drivers/    — PL011 UART, Virtio block/net, ramfb, virtio-tablet, virtio-keybo
 fs/         — In-memory hierarchical file system (128 nodes, 4KB/file)
 net/        — Network stack (ARP, IPv4, ICMP, UDP, DHCP, DNS, HTTP, NTP)
 gui/        — Window manager, desktop, start menu, file explorer
-apps/       — GUI applications (.ogz.cpp files): notepad, terminal, task manager, settings
+apps/       — GUI applications (.ogz.cpp files): notepad, terminal, task manager, settings, browser, C# IDE, C# GUI host
 shell/      — UART shell, shared command library (commands.cpp)
 lib/        — String/memory utils, syslog, settings, env vars, file assoc, menu config
+lang/       — Mini C# interpreter (console + GUI modes) with widget system
 scripts/    — QEMU launcher (run.sh) and UTM image builder (mkimage.sh)
 build/      — Generated object files and binaries (gitignored)
 ```
@@ -89,7 +90,7 @@ When a file is double-clicked in the explorer:
 
 ### Start Menu
 
-The start menu is data-driven from `menu::` config (not auto-discovered from the app registry). Entry types: `ENTRY_APP`, `ENTRY_SHORTCUT`, `ENTRY_COMMAND`, `ENTRY_SEP`, `ENTRY_EXPLORER`, `ENTRY_ABOUT`, `ENTRY_SHUTDOWN`. The GUI calls `build_menu()` at startup to populate the display from `menu::` entries.
+The start menu is data-driven from `menu::` config (not auto-discovered from the app registry). Entry types: `ENTRY_APP`, `ENTRY_SHORTCUT`, `ENTRY_COMMAND`, `ENTRY_SEP`, `ENTRY_EXPLORER`, `ENTRY_ABOUT`, `ENTRY_SHUTDOWN`, `ENTRY_RESTART`. The GUI calls `build_menu()` at startup to populate the display from `menu::` entries.
 
 ## Adding New Source Files
 
@@ -98,6 +99,8 @@ Object files are listed explicitly in the Makefile `OBJS` list (not auto-discove
 - `drivers/net.cpp` → `build/netdev.o` (namespace `netdev`, header: `drivers/netdev.h`)
 - `net/net.cpp` → `build/netstack.o` (namespace `net`, header: `net/net.h`)
 - `apps/settings.ogz.cpp` → `build/settingsapp.o` (avoids collision with `lib/settings.cpp` → `build/settings.o`)
+- `lang/csharp.cpp` → `build/csharp_interp.o` (namespace `csharp`, header: `lang/csharp.h`)
+- `apps/csharp.ogz.cpp` → `build/csharp_ide.o` (avoids collision with `lang/csharp.cpp`)
 
 When adding a new `.cpp` file: add a build rule in the Makefile following the existing pattern and append the new `.o` to the `OBJS` list.
 
@@ -111,7 +114,9 @@ Apps use the `.ogz.cpp` naming convention and follow a function-pointer interfac
 3. In `kernel/kernel.cpp`: declare `namespace apps { void register_myapp(); }` and call it in `kernel_main()` before the shell loop
 4. The app auto-gets a `/bin/myapp.ogz` entry and appears in the default start menu
 
-**OgzApp callbacks:** `on_open`, `on_draw`, `on_key`, `on_arrow`, `on_close` are required; `on_click`, `on_scroll`, `on_mouse_down`, `on_mouse_move`, `on_open_file` can be `nullptr`. Each app window gets a 4096-byte `app_state` buffer — use `static_assert(sizeof(MyState) <= 4096)` to enforce.
+**App registry** holds up to 16 apps (`MAX_APPS`). Registration calls `apps::register_app(&app_struct)` which stores the pointer and creates the `/bin/` entry.
+
+**OgzApp callbacks:** `on_open`, `on_draw`, `on_key`, `on_arrow`, `on_close` are required; `on_click`, `on_scroll`, `on_mouse_down`, `on_mouse_move`, `on_open_file` can be `nullptr`. `on_key` returns `bool` (true if the key was consumed). Each app window gets a 4096-byte `app_state` buffer — use `static_assert(sizeof(MyState) <= 4096)` to enforce.
 
 **`on_open_file`** — optional callback `void (*)(u8 *state, const char *path, const char *content)` called after `on_open` when the app is launched to open a specific file. Used by Notepad (text editing) and Terminal (command execution).
 
@@ -124,6 +129,28 @@ Apps use the `.ogz.cpp` naming convention and follow a function-pointer interfac
 3. Add dispatch to `apps/terminal.ogz.cpp` `term_exec()` (GUI terminal) — for commands that call UART-printing functions (like `net::ping()`), wrap with `uart::capture_start/stop`
 4. Update help text in both places
 
+## C# Interpreter and Widget System
+
+The `lang/` directory contains a mini C# interpreter (`csharp::` namespace) with two execution modes:
+
+- **Console mode**: `csharp::run(source, out_buf, out_size)` — executes code, captures output to buffer. Built-in: `Console.WriteLine/Write`.
+- **GUI mode**: `csharp::init(source)` then per-frame `call_draw()`, `call_click(x,y)`, `call_key(key)`, `call_arrow(dir)` — for interactive programs. Built-in: `Gfx.Clear/FillRect/Rect/DrawText/Pixel/Line`, `App.Close/Width/Height`.
+
+**Widget system** (GUI mode only): 5 widget types — `Label`, `Button`, `TextBox`, `CheckBox`, `Panel`. Max 16 widgets per program. Created with C# `new` syntax (e.g., `Button btn = new Button(x, y, w, h);`). Widgets support `.Text`, `.Clicked`, `.GetText()`, `.SetText()`, `.SetChecked()`.
+
+Two apps use this: `csharp.ogz.cpp` (C# IDE with syntax highlighting, templates for Console/.csg programs) and `csgui.ogz.cpp` (GUI host for running .csg programs with `OnDraw`/`OnClick`/`OnKey`/`OnArrow` callbacks).
+
+## Graphics Primitives
+
+`gui/graphics.h` (`gfx::` namespace) provides double-buffered rendering:
+
+- `gfx::clear(color)`, `gfx::pixel(x, y, color)`, `gfx::fill_rect(x, y, w, h, color)`, `gfx::rect(x, y, w, h, color)` (outline), `gfx::hline(x, y, w, color)`
+- `gfx::draw_char(x, y, c, fg, bg)`, `gfx::draw_text(x, y, text, fg, bg)`, `gfx::draw_text_nobg(x, y, text, fg)`
+- `gfx::text_width(text)`, `gfx::font_w()` (8px), `gfx::font_h()` (15px)
+- `gfx::swap()` — copy backbuffer to framebuffer (called once per frame)
+
+Color format: `0x00RRGGBB`. Backbuffer supports up to 1920×1080.
+
 ## UART Output Capture
 
 `uart::capture_start(buf, size)` / `uart::capture_stop()` in `drivers/uart.h` — when active, `uart::putc()` also writes to the provided buffer (skipping `\r`). Used by the GUI terminal to capture output from functions that print directly to UART (network commands, etc.).
@@ -135,7 +162,7 @@ Apps use the `.ogz.cpp` naming convention and follow a function-pointer interfac
 - `kernel_main` must be declared `extern "C"` — called from assembly. Three C++ ABI stubs (`__cxa_pure_virtual`, `__cxa_atexit`, `__dso_handle`) are provided in kernel.cpp
 - Network byte order conversions needed for all protocol headers (ARM64 is little-endian)
 - Hardware addresses are hardcoded for QEMU virt machine — do not change without updating QEMU args
-- QEMU runtime: 512MB RAM, cortex-a72, virtio-blk for disk, virtio-net with user-mode networking
+- QEMU runtime: 1GB RAM, cortex-a72, virtio-blk for disk, virtio-net with user-mode networking
 - The kernel is single-threaded; secondary CPUs are parked in boot.S
 - PSCI calls used for halt/reboot; ARM generic timer used for uptime
 - QEMU user-mode networking: gateway 10.0.2.2, DHCP assigns 10.0.2.15, DNS at 10.0.2.3
