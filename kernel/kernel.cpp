@@ -23,6 +23,7 @@ void register_terminal();
 void register_taskman();
 void register_settings();
 void register_browser();
+void register_csharp();
 }
 
 namespace {
@@ -146,6 +147,7 @@ extern "C" void kernel_main() {
     assoc::set(".csv", "notepad.ogz");
     assoc::set(".sh", "notepad.ogz");
     assoc::set(".json", "notepad.ogz");
+    assoc::set(".cs", "terminal.ogz");
     assoc::save();
     syslog::info("kernel", "created default /etc/filetypes");
   }
@@ -159,6 +161,7 @@ extern "C" void kernel_main() {
   apps::register_taskman();
   apps::register_settings();
   apps::register_browser();
+  apps::register_csharp();
   syslog::info("kernel", "registered %d apps", apps::count());
 
   // Ensure key directories exist (even on disk-restored FS)

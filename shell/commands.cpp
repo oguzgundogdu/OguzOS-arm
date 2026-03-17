@@ -1,4 +1,5 @@
 #include "commands.h"
+#include "csharp.h"
 #include "disk.h"
 #include "env.h"
 #include "fs.h"
@@ -499,6 +500,41 @@ void xxd(OutFn out, void *ctx, const char *file) {
     line[li] = '\0';
     out(ctx, line);
   }
+}
+
+void csrun(OutFn out, void *ctx, const char *filepath) {
+  if (!filepath || filepath[0] == '\0') {
+    out(ctx, "usage: csrun <file.cs>\n");
+    return;
+  }
+
+  // Resolve the file
+  i32 idx = fs::resolve(filepath);
+  if (idx < 0) {
+    out(ctx, "csrun: file not found: ");
+    out(ctx, filepath);
+    out(ctx, "\n");
+    return;
+  }
+
+  const fs::Node *node = fs::get_node(idx);
+  if (!node || node->type != fs::NodeType::File) {
+    out(ctx, "csrun: not a file: ");
+    out(ctx, filepath);
+    out(ctx, "\n");
+    return;
+  }
+
+  // Run the interpreter
+  char output[1024];
+  bool ok = csharp::run(node->content, output, 1024);
+
+  // Print output
+  if (output[0])
+    out(ctx, output);
+
+  if (!ok && output[0] == '\0')
+    out(ctx, "csrun: execution failed\n");
 }
 
 } // namespace cmd

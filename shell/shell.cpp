@@ -737,6 +737,9 @@ void execute(char *input) {
   } else if (str::cmp(cmd, "xxd") == 0) {
     if (argc < 2) uart::puts("usage: xxd <file>\n");
     else cmd::xxd(uart_out, nullptr, args[1]);
+  } else if (str::cmp(cmd, "csrun") == 0) {
+    if (argc < 2) uart::puts("usage: csrun <file.cs>\n");
+    else cmd::csrun(uart_out, nullptr, args[1]);
   } else {
     // Try to resolve command from PATH (e.g. "notepad" -> "/bin/notepad.ogz")
     const char *app_id = env::resolve_command(cmd);

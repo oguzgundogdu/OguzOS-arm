@@ -115,6 +115,7 @@ void term_exec(TermState *s) {
     term_append(s, " ifconfig ping dhcp curl\n");
     term_append(s, " assoc unassoc lsassoc\n");
     term_append(s, " pin unpin lsmenu\n");
+    term_append(s, " csrun <file.cs>\n");
     term_append(s, " reboot halt <app>\n");
   } else if (str::cmp(p, "clear") == 0) {
     s->output[0] = '\0';
@@ -608,6 +609,20 @@ void term_exec(TermState *s) {
   } else if (str::cmp(p, "which") == 0) {
     if (*arg == '\0') term_append(s, "usage: which <cmd>\n");
     else cmd::which(term_out, s, arg);
+  } else if (str::cmp(p, "csrun") == 0) {
+    if (*arg == '\0') { term_append(s, "usage: csrun <file.cs>\n"); }
+    else {
+      // Resolve relative to terminal cwd
+      char fullpath[256];
+      if (arg[0] == '/') {
+        str::ncpy(fullpath, arg, 255);
+      } else {
+        str::ncpy(fullpath, s->cwd, 255);
+        if (str::len(fullpath) > 1) str::cat(fullpath, "/");
+        str::cat(fullpath, arg);
+      }
+      cmd::csrun(term_out, s, fullpath);
+    }
   } else {
     // Try to resolve command from PATH
     const char *app_id = env::resolve_command(p);
@@ -746,9 +761,25 @@ void terminal_arrow(u8 *, char) {
 
 void terminal_close(u8 *) {}
 
-void terminal_open_file(u8 *state, const char * /*path*/, const char *content) {
-  // "content" is treated as a command to execute
+void terminal_open_file(u8 *state, const char *path, const char *content) {
   auto *s = reinterpret_cast<TermState *>(state);
+
+  // Check if this is a .cs file → auto-run with csrun
+  if (path) {
+    usize plen = str::len(path);
+    if (plen > 3 && str::cmp(path + plen - 3, ".cs") == 0) {
+      str::cpy(s->cmd, "csrun ");
+      str::ncpy(s->cmd + 6, path, 193);
+      s->cmd_len = static_cast<i32>(str::len(s->cmd));
+      term_append(s, s->cmd);
+      term_exec(s);
+      s->cmd[0] = '\0';
+      s->cmd_len = 0;
+      return;
+    }
+  }
+
+  // Otherwise treat content as a command to execute
   if (!content || content[0] == '\0')
     return;
   str::ncpy(s->cmd, content, 199);

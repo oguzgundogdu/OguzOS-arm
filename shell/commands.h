@@ -24,6 +24,9 @@ void tree(OutFn out, void *ctx, const char *path, i32 depth);
 void df(OutFn out, void *ctx);
 void grep(OutFn out, void *ctx, const char *pattern, const char *file);
 
+// C# interpreter
+void csrun(OutFn out, void *ctx, const char *filepath);
+
 // System info
 void date(OutFn out, void *ctx);
 void hostname(OutFn out, void *ctx);

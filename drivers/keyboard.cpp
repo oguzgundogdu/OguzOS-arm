@@ -555,6 +555,7 @@ void handle_key_event(u16 code, u32 value) {
   if (code == KEY_HOME) { push_arrow('H'); return; }
   if (code == KEY_END) { push_arrow('F'); return; }
   if (code == KEY_DELETE) { push_key(0x04); return; } // Ctrl+D (forward delete)
+  if (code == 63) { push_key(0x12); return; } // F5 → Ctrl+R (run)
 
   // Map keycode to ASCII using active layout
   if (code >= 128)
