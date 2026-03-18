@@ -138,7 +138,22 @@ The `lang/` directory contains a mini C# interpreter (`csharp::` namespace) with
 
 **Widget system** (GUI mode only): 5 widget types — `Label`, `Button`, `TextBox`, `CheckBox`, `Panel`. Max 16 widgets per program. Created with C# `new` syntax (e.g., `Button btn = new Button(x, y, w, h);`). Widgets support `.Text`, `.Clicked`, `.GetText()`, `.SetText()`, `.SetChecked()`.
 
-Two apps use this: `csharp.ogz.cpp` (C# IDE with syntax highlighting, templates for Console/.csg programs) and `csgui.ogz.cpp` (GUI host for running .csg programs with `OnDraw`/`OnClick`/`OnKey`/`OnArrow` callbacks).
+Two apps use this: `csharp.ogz.cpp` (C# IDE with syntax highlighting, templates, solution explorer) and `csgui.ogz.cpp` (GUI host for running .csg programs with `OnDraw`/`OnClick`/`OnKey`/`OnArrow` callbacks).
+
+**Solution system** (`.sln` files): The C# IDE supports multi-file projects via a simple line-based `.sln` format:
+```
+#OguzSln v1
+Name=MyProject
+Type=Console
+File=Program.cs
+File=Utils.cs
+```
+- Up to 8 files per solution, stored in the same directory as the `.sln` file
+- Solution explorer panel (toggle: Ctrl+E) shows project files on the left
+- Ctrl+N adds a new file, "- Remove File" button removes the active file
+- Switching files auto-saves the current file to the filesystem
+- Template chooser offers "Solution (.sln)" as a third project type
+- `.sln` files are associated with `csharp.ogz` via `assoc::`
 
 ## Graphics Primitives
 
@@ -166,7 +181,7 @@ Color format: `0x00RRGGBB`. Backbuffer supports up to 1920×1080.
 - The kernel is single-threaded; secondary CPUs are parked in boot.S
 - PSCI calls used for halt/reboot; ARM generic timer used for uptime
 - QEMU user-mode networking: gateway 10.0.2.2, DHCP assigns 10.0.2.15, DNS at 10.0.2.3
-- App state limited to 4096 bytes per window instance; max 8 simultaneous windows
+- App state limited to 8192 bytes per window instance; max 8 simultaneous windows
 - `syslog::init()` must be called after `fs::init()` to enable file logging
 - Virtio mouse driver uses 64 event buffers with queue size 128 — insufficient buffers cause delayed button release events (sticky drag)
 - `settings::save()` and `assoc::save()` call `fs::sync_to_disk()` internally — no separate sync needed

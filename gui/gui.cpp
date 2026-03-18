@@ -63,7 +63,7 @@ struct Window {
 
   // App state (WIN_APP only)
   OgzApp *app;
-  u8 app_state[4096]; // private state for the app
+  u8 app_state[8192]; // private state for the app
 };
 
 constexpr i32 MAX_WINDOWS = 8;

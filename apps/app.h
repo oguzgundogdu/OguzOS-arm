@@ -9,7 +9,7 @@
  * and registered at startup. The GUI window manager calls these callbacks
  * to let apps draw, handle input, and manage their own state.
  *
- * app_state: 512-byte scratch area owned by each app instance.
+ * app_state: 8192-byte scratch area owned by each app instance.
  * Apps cast this to their own state struct.
  */
 

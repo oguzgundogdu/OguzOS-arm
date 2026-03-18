@@ -148,8 +148,9 @@ extern "C" void kernel_main() {
     assoc::set(".csv", "notepad.ogz");
     assoc::set(".sh", "notepad.ogz");
     assoc::set(".json", "notepad.ogz");
-    assoc::set(".cs", "terminal.ogz");
+    assoc::set(".cs", "csharp.ogz");
     assoc::set(".csg", "csgui.ogz");
+    assoc::set(".sln", "csharp.ogz");
     assoc::save();
     syslog::info("kernel", "created default /etc/filetypes");
   }
