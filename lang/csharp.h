@@ -39,6 +39,10 @@ void call_arrow(char dir);      // OnArrow(dir)  0=up 1=down 2=right 3=left
 // Check if App.Close() was called
 bool should_close();
 
+// Check if a runtime error occurred (and get the error message)
+bool has_error();
+const char *get_error();
+
 // Clean up GUI state
 void gui_cleanup();
 

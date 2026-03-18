@@ -38,13 +38,34 @@ BUILD_DIR   = build
 INCLUDES = -I$(ARCH_DIR) -I$(KERNEL_DIR) -I$(DRIVERS_DIR) -I$(FS_DIR) \
            -I$(SHELL_DIR) -I$(LIB_DIR) -I$(NET_DIR) -I$(GUI_DIR) -I$(APPS_DIR) -I$(LANG_DIR)
 
+# Boot-time defaults (override on command line):
+#   make gui RES=1280x720 KBD=tr
+RES ?= 1920x1080
+KBD ?= us
+
+# Parse RES into width and height
+RES_W := $(firstword $(subst x, ,$(RES)))
+RES_H := $(lastword $(subst x, ,$(RES)))
+
+# Map KBD name to index (0=us, 1=uk, 2=tr, 3=de, 4=fr, 5=es, 6=it, 7=pt)
+KBD_MAP_us  = 0
+KBD_MAP_uk  = 1
+KBD_MAP_tr  = 2
+KBD_MAP_de  = 3
+KBD_MAP_fr  = 4
+KBD_MAP_es  = 5
+KBD_MAP_it  = 6
+KBD_MAP_pt  = 7
+KBD_INDEX   = $(or $(KBD_MAP_$(KBD)),0)
+
 # Flags for freestanding C++ (no standard library)
 COMMON_FLAGS = -ffreestanding -nostdlib -nostartfiles -mgeneral-regs-only \
                -mstrict-align -Wall -Wextra -O2
 
 ASFLAGS = $(COMMON_FLAGS)
 CXXFLAGS = $(COMMON_FLAGS) $(INCLUDES) -fno-exceptions -fno-rtti \
-           -fno-threadsafe-statics -fno-use-cxa-atexit -std=c++17
+           -fno-threadsafe-statics -fno-use-cxa-atexit -std=c++17 \
+           -DDEFAULT_RES_W=$(RES_W) -DDEFAULT_RES_H=$(RES_H) -DDEFAULT_KBD=$(KBD_INDEX)
 
 LDFLAGS = -T $(ARCH_DIR)/linker.ld -nostdlib
 
@@ -98,6 +119,8 @@ $(KERNEL_BIN): $(KERNEL_ELF)
 	@echo "  OguzOS built successfully!"
 	@echo "  Binary: $(KERNEL_BIN)"
 	@echo "  Size: $$(wc -c < $(KERNEL_BIN)) bytes"
+	@echo "  Resolution: $(RES_W)x$(RES_H)"
+	@echo "  Keyboard: $(KBD)"
 	@echo "========================================="
 	@echo ""
 
@@ -217,8 +240,15 @@ run: $(KERNEL_BIN) $(DISK_IMG)
 		-netdev user,id=net0 \
 		-device virtio-net-device,netdev=net0
 
-# Run with QEMU — graphical mode (ramfb + mouse, type 'gui' in shell)
+# Run with QEMU — graphical mode (ramfb + mouse + keyboard)
+# Usage: make gui [RES=1280x720] [KBD=tr]
+# QEMU keyboard note: QEMU's Cocoa backend on macOS requires the host keyboard
+# to be set to "US" (or "ABC") for all keys to work. Add US to macOS input sources
+# and switch to it before launching QEMU. The KBD= option sets the OS-internal
+# layout for any differences in punctuation mapping.
 gui: $(KERNEL_BIN) $(DISK_IMG)
+	@echo "  Resolution: $(RES_W)x$(RES_H)  Keyboard: $(KBD) (index $(KBD_INDEX))"
+	@echo "  Note: Set macOS keyboard to 'US' or 'ABC' for all keys to work in QEMU"
 	qemu-system-aarch64 \
 		-machine virt \
 		-cpu cortex-a72 \

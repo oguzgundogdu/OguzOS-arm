@@ -7,9 +7,20 @@ namespace {
 
 i32 tz_offset = 0;               // UTC
 u32 desktop_color = 0x00336699;   // Default blue
-i32 kbd_layout = 0;              // English (US)
-u32 res_w = 1920;                // Screen width
-u32 res_h = 1080;                // Screen height
+
+#ifndef DEFAULT_KBD
+#define DEFAULT_KBD 0
+#endif
+#ifndef DEFAULT_RES_W
+#define DEFAULT_RES_W 1920
+#endif
+#ifndef DEFAULT_RES_H
+#define DEFAULT_RES_H 1080
+#endif
+
+i32 kbd_layout = DEFAULT_KBD;
+u32 res_w = DEFAULT_RES_W;
+u32 res_h = DEFAULT_RES_H;
 
 // Simple integer-to-string helper
 void i32_to_str(i32 val, char *buf) {

@@ -51,6 +51,16 @@ void csgui_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
   // Call C# OnDraw
   csharp::set_draw_ctx(cx, cy, cw, ch);
   csharp::call_draw();
+
+  // Check for runtime error after drawing
+  if (csharp::has_error()) {
+    s->error = true;
+    const char *emsg = csharp::get_error();
+    if (emsg && emsg[0])
+      str::ncpy(s->error_msg, emsg, 127);
+    else
+      str::cpy(s->error_msg, "Runtime error");
+  }
 }
 
 bool csgui_key(u8 *state, char key) {
@@ -71,8 +81,16 @@ void csgui_close(u8 *) {
 
 void csgui_click(u8 *state, i32 rx, i32 ry, i32 /*cw*/, i32 /*ch*/) {
   auto *s = reinterpret_cast<CsGuiState *>(state);
-  if (!s->initialized) return;
+  if (!s->initialized || s->error) return;
   csharp::call_click(rx, ry);
+  if (csharp::has_error()) {
+    s->error = true;
+    const char *emsg = csharp::get_error();
+    if (emsg && emsg[0])
+      str::ncpy(s->error_msg, emsg, 127);
+    else
+      str::cpy(s->error_msg, "Runtime error");
+  }
 }
 
 void csgui_scroll(u8 *, i32) {}

@@ -106,6 +106,13 @@ constexpr u32 COL_SLN_FOLDER = 0x00FFCC44;
 constexpr u32 COL_SLN_FILE = 0x0089B4FA;
 constexpr u32 COL_SLN_TEXT = 0x00A6ADC8;
 constexpr u32 COL_SLN_ADD = 0x00A6E3A1;
+constexpr u32 COL_TOOLBAR = 0x00252535;
+constexpr u32 COL_TB_BTN = 0x00333348;
+constexpr u32 COL_TB_BTN_HOV = 0x00444460;
+constexpr u32 COL_TB_TEXT = 0x00CDD6F4;
+constexpr u32 COL_TB_RUN = 0x00A6E3A1;
+constexpr u32 COL_TB_SEP = 0x00444455;
+constexpr i32 TOOLBAR_H = 22;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 i32 count_lines(const char *t, i32 pos) {
@@ -849,10 +856,52 @@ void csharp_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
     draw_sln_panel(s, cx, cy, panel_w, ch);
   }
 
-  // Layout: editor top 60%, output bottom 40%
-  i32 editor_h = (ch - STATUS_H - SPLIT_H) * 6 / 10;
-  i32 output_h = ch - STATUS_H - SPLIT_H - editor_h;
-  i32 split_y = cy + editor_h;
+  // ── Toolbar ──
+  i32 tb_y = cy;
+  gfx::fill_rect(ex, tb_y, ew, TOOLBAR_H, COL_TOOLBAR);
+
+  // Toolbar buttons
+  i32 bx = ex + 4, by = tb_y + 2, bh = TOOLBAR_H - 4;
+  auto draw_tb_btn = [&](const char *label, u32 bg, u32 fg) -> i32 {
+    i32 bw = gfx::text_width(label) + 12;
+    gfx::fill_rect(bx, by, bw, bh, bg);
+    gfx::draw_text(bx + 6, by + 1, label, fg, bg);
+    i32 old_bx = bx;
+    bx += bw + 4;
+    (void)old_bx;
+    return bw;
+  };
+
+  // Run button (green accent)
+  draw_tb_btn(s->sln.active ? (s->sln.type == 1 ? "> Run GUI" : "> Run") : "> Run",
+              COL_TB_BTN, COL_TB_RUN);
+
+  // Save button
+  draw_tb_btn("Save", COL_TB_BTN, COL_TB_TEXT);
+
+  // Save As button
+  draw_tb_btn("Save As", COL_TB_BTN, COL_TB_TEXT);
+
+  // Separator
+  gfx::fill_rect(bx, by + 2, 1, bh - 4, COL_TB_SEP);
+  bx += 6;
+
+  // Solution-specific buttons
+  if (s->sln.active) {
+    draw_tb_btn(s->sln_panel_open ? "Hide Explorer" : "Show Explorer",
+                COL_TB_BTN, COL_TB_TEXT);
+    draw_tb_btn("+ File", COL_TB_BTN, COL_SLN_ADD);
+  }
+
+  // Bottom separator line for toolbar
+  gfx::hline(ex, tb_y + TOOLBAR_H - 1, ew, COL_TB_SEP);
+
+  // Layout: editor top 60%, output bottom 40% (below toolbar)
+  i32 area_y = cy + TOOLBAR_H;
+  i32 area_h = ch - TOOLBAR_H;
+  i32 editor_h = (area_h - STATUS_H - SPLIT_H) * 6 / 10;
+  i32 output_h = area_h - STATUS_H - SPLIT_H - editor_h;
+  i32 split_y = area_y + editor_h;
   i32 out_y = split_y + SPLIT_H;
   i32 status_y = cy + ch - STATUS_H;
 
@@ -871,10 +920,6 @@ void csharp_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
   str::cat(status, ", Col ");
   append_int(status, cursor_col(s->src, s->cursor) + 1);
   gfx::draw_text(ex + 4, status_y + 3, status, COL_STATUS_TEXT, COL_STATUS);
-
-  const char *hint = s->sln.active ? "F5 Run  F6 GUI  Ctrl+E Explorer" : "F5 Run  F6 GUI  Ctrl+S Save";
-  i32 hw = gfx::text_width(hint);
-  gfx::draw_text(ex + ew - hw - 4, status_y + 3, hint, COL_RUN_BTN, COL_STATUS);
 
   // ── Splitter ──
   gfx::fill_rect(ex, split_y, ew, SPLIT_H, COL_SPLITTER);
@@ -895,13 +940,13 @@ void csharp_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
       }
     }
   } else {
-    gfx::draw_text(ex + 4, out_y + 2, "F5=Console  F6=GUI App", COL_COMMENT, COL_OUT_BG);
+    gfx::draw_text(ex + 4, out_y + 2, "Press F5 to run", COL_COMMENT, COL_OUT_BG);
   }
 
   // ── Editor ──
   i32 vis_lines = editor_h / LH;
-  gfx::fill_rect(ex, cy, LNW, editor_h, COL_LINENUM_BG);
-  gfx::fill_rect(ex + LNW, cy, ew - LNW, editor_h, COL_BG);
+  gfx::fill_rect(ex, area_y, LNW, editor_h, COL_LINENUM_BG);
+  gfx::fill_rect(ex + LNW, area_y, ew - LNW, editor_h, COL_BG);
 
   i32 cl = count_lines(s->src, s->cursor);
   if (cl < s->scroll_y) s->scroll_y = cl;
@@ -918,7 +963,7 @@ void csharp_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
     char cc = at_end ? '\0' : s->src[i];
 
     if (line >= s->scroll_y && line < s->scroll_y + vis_lines) {
-      i32 py = cy + (line - s->scroll_y) * LH;
+      i32 py = area_y + (line - s->scroll_y) * LH;
 
       if (col == 0) {
         char lnb[8]; i32 v = line + 1, li = 0;
@@ -1082,40 +1127,122 @@ bool csharp_key(u8 *state, char key) {
     return true;
   }
 
-  // F5 / Ctrl+R = Run
+  // F5 / Ctrl+R = Run (auto-detects console vs GUI mode)
   if (key == 0x12) {
+    // Save current file first
     if (s->sln.active) flush_current_file(s);
     else if (s->filepath[0]) save_file(s);
-    s->ran_ok = csharp::run(s->src, s->output, OUT_MAX);
-    s->has_output = true;
-    s->out_scroll = 0;
-    return true;
-  }
 
-  // F6 / Ctrl+G = Run as GUI App
-  if (key == 0x07) {
-    char gui_path[128];
-    if (s->filepath[0]) {
-      str::ncpy(gui_path, s->filepath, 127);
-      usize pl = str::len(gui_path);
-      if (pl > 3 && str::cmp(gui_path + pl - 3, ".cs") == 0) {
-        gui_path[pl] = 'g';
-        gui_path[pl + 1] = '\0';
+    // Determine run mode and build the merged source
+    bool gui_mode = false;
+    // Merged source buffer: concatenate all solution files
+    // (entry file first so Main() is found in the right class)
+    constexpr i32 MERGED_MAX = 4096;
+    static char merged_src[MERGED_MAX];
+    const char *run_src = s->src; // default: current buffer
+
+    if (s->sln.active) {
+      gui_mode = (s->sln.type == 1);
+
+      // Find the entry file index
+      const char *ext = gui_mode ? ".csg" : ".cs";
+      i32 entry_idx = -1;
+      for (i32 i = 0; i < s->sln.file_count; i++) {
+        if (ends_with(s->sln.files[i].name, ext)) { entry_idx = i; break; }
       }
-    } else {
-      str::cpy(gui_path, "/tmp/app.csg");
+      if (entry_idx < 0) {
+        s->has_output = true;
+        s->ran_ok = false;
+        str::cpy(s->output, "Error: no ");
+        str::cat(s->output, ext);
+        str::cat(s->output, " entry file in solution.\n");
+        s->out_scroll = 0;
+        return true;
+      }
+
+      // Concatenate all files: entry file first, then the rest
+      merged_src[0] = '\0';
+      i32 mlen = 0;
+      char old[256]; fs::get_cwd(old, sizeof(old));
+      fs::cd(s->sln.dir);
+
+      // Helper: append a file's content to merged_src
+      auto append_file = [&](i32 idx) {
+        const char *content;
+        if (idx == s->sln.active_file)
+          content = s->src; // use in-memory version (may have unsaved edits)
+        else
+          content = fs::cat(s->sln.files[idx].name);
+        if (!content) return;
+        usize cl = str::len(content);
+        if (mlen + static_cast<i32>(cl) + 2 >= MERGED_MAX) return; // skip if no room
+        if (mlen > 0) { merged_src[mlen++] = '\n'; }
+        str::memcpy(merged_src + mlen, content, cl);
+        mlen += static_cast<i32>(cl);
+        merged_src[mlen] = '\0';
+      };
+
+      // Entry file first
+      append_file(entry_idx);
+      // Then all other files
+      for (i32 i = 0; i < s->sln.file_count; i++) {
+        if (i != entry_idx) append_file(i);
+      }
+
+      fs::cd(old);
+      run_src = merged_src;
+    } else if (s->filepath[0]) {
+      gui_mode = ends_with(s->filepath, ".csg");
     }
 
-    char dir[128], name[64];
-    split_path(gui_path, dir, sizeof(dir), name, sizeof(name));
-    char old_cwd[256]; fs::get_cwd(old_cwd, sizeof(old_cwd));
-    fs::cd(dir); fs::touch(name); fs::write(name, s->src);
-    fs::sync_to_disk(); fs::cd(old_cwd);
-
-    gui::open_file(gui_path, s->src);
-    s->has_output = true;
-    s->ran_ok = true;
-    str::cpy(s->output, "GUI app launched.\n");
+    if (gui_mode) {
+      // GUI mode: validate first using init(), then launch if OK
+      bool valid = csharp::init(run_src);
+      csharp::gui_cleanup();
+      s->has_output = true;
+      if (!valid) {
+        s->ran_ok = false;
+        csharp::run(run_src, s->output, OUT_MAX);
+        s->out_scroll = 0;
+      } else {
+        // Build the .csg path for launching
+        char gui_path[128];
+        if (s->sln.active) {
+          str::cpy(gui_path, s->sln.dir);
+          str::cat(gui_path, "/");
+          // Find the .csg entry filename
+          for (i32 i = 0; i < s->sln.file_count; i++) {
+            if (ends_with(s->sln.files[i].name, ".csg")) {
+              str::cat(gui_path, s->sln.files[i].name);
+              break;
+            }
+          }
+        } else if (s->filepath[0]) {
+          str::ncpy(gui_path, s->filepath, 127);
+          usize pl = str::len(gui_path);
+          if (pl > 3 && str::cmp(gui_path + pl - 3, ".cs") == 0) {
+            gui_path[pl] = 'g';
+            gui_path[pl + 1] = '\0';
+          }
+        } else {
+          str::cpy(gui_path, "/tmp/app.csg");
+        }
+        // Save merged source to the .csg file so csgui host sees everything
+        char gdir[128], gname[64];
+        split_path(gui_path, gdir, sizeof(gdir), gname, sizeof(gname));
+        char old2[256]; fs::get_cwd(old2, sizeof(old2));
+        fs::cd(gdir); fs::touch(gname); fs::write(gname, run_src);
+        fs::sync_to_disk(); fs::cd(old2);
+        gui::open_file(gui_path, run_src);
+        s->ran_ok = true;
+        str::cpy(s->output, "Build succeeded. GUI app launched.\n");
+      }
+    } else {
+      // Console mode: run the entry file source
+      s->ran_ok = csharp::run(run_src, s->output, OUT_MAX);
+      s->has_output = true;
+      s->out_scroll = 0;
+    }
     return true;
   }
 
@@ -1280,13 +1407,66 @@ void csharp_click(u8 *state, i32 rx, i32 ry, i32 cw, i32 ch) {
 
   i32 panel_w = (s->sln_panel_open && s->sln.active) ? SLN_PANEL_W : 0;
 
+  // ── Toolbar click handling ──
+  if (ry < TOOLBAR_H && rx >= panel_w) {
+    // Replay the button layout to find which was clicked
+    i32 bx2 = panel_w + 4;
+    auto btn_w = [&](const char *label) -> i32 { return gfx::text_width(label) + 12; };
+
+    // Run button
+    const char *run_label = s->sln.active ? (s->sln.type == 1 ? "> Run GUI" : "> Run") : "> Run";
+    i32 rw = btn_w(run_label);
+    if (rx >= bx2 && rx < bx2 + rw) {
+      csharp_key(state, 0x12); // trigger F5/Run
+      return;
+    }
+    bx2 += rw + 4;
+
+    // Save button
+    i32 sw = btn_w("Save");
+    if (rx >= bx2 && rx < bx2 + sw) {
+      csharp_key(state, 0x13); // trigger Ctrl+S
+      return;
+    }
+    bx2 += sw + 4;
+
+    // Save As button
+    i32 saw = btn_w("Save As");
+    if (rx >= bx2 && rx < bx2 + saw) {
+      csharp_key(state, 0x17); // trigger Ctrl+W
+      return;
+    }
+    bx2 += saw + 4 + 1 + 6; // + separator
+
+    // Solution buttons
+    if (s->sln.active) {
+      const char *exp_label = s->sln_panel_open ? "Hide Explorer" : "Show Explorer";
+      i32 ew2 = btn_w(exp_label);
+      if (rx >= bx2 && rx < bx2 + ew2) {
+        s->sln_panel_open = !s->sln_panel_open;
+        return;
+      }
+      bx2 += ew2 + 4;
+
+      i32 afw = btn_w("+ File");
+      if (rx >= bx2 && rx < bx2 + afw) {
+        if (s->sln.file_count < SLN_MAX_FILES) {
+          s->addfile_open = true;
+          str::cpy(s->addfile_buf, "NewFile.cs");
+          s->addfile_cursor = static_cast<i32>(str::len(s->addfile_buf));
+        }
+        return;
+      }
+    }
+    return;
+  }
+
   // Click in solution explorer panel
   if (s->sln_panel_open && s->sln.active && rx < panel_w) {
     i32 fh = gfx::font_h(), LH = fh + 4;
     i32 hdr_h = fh + 8;
-    i32 file_start_y = hdr_h + 4 + LH + 6; // header + sln name + separator
+    i32 file_start_y = hdr_h + 4 + LH + 6;
 
-    // Check "Add File" and "Remove File" buttons at bottom
     i32 btn_y = ch - LH * 2 - 8;
     i32 rm_y = btn_y + LH + 2;
     if (ry >= btn_y - 2 && ry < btn_y + LH) {
@@ -1304,7 +1484,6 @@ void csharp_click(u8 *state, i32 rx, i32 ry, i32 cw, i32 ch) {
       return;
     }
 
-    // Click on a file entry
     i32 file_idx = (ry - file_start_y) / LH;
     if (file_idx >= 0 && file_idx < s->sln.file_count) {
       switch_file(s, file_idx);
@@ -1312,12 +1491,14 @@ void csharp_click(u8 *state, i32 rx, i32 ry, i32 cw, i32 ch) {
     return;
   }
 
-  // Click in editor area (adjust for panel offset)
+  // Click in editor area (adjust for panel and toolbar offset)
   i32 fh = gfx::font_h(), STATUS_H = fh + 6, SPLIT_H = 4;
-  i32 editor_h = (ch - STATUS_H - SPLIT_H) * 6 / 10;
-  i32 erx = rx - panel_w; // editor-relative x
-  if (erx >= 0 && ry < editor_h) {
-    s->cursor = pos_from_xy(s, erx, ry, ch, editor_h);
+  i32 area_h = ch - TOOLBAR_H;
+  i32 editor_h = (area_h - STATUS_H - SPLIT_H) * 6 / 10;
+  i32 erx = rx - panel_w;
+  i32 ery = ry - TOOLBAR_H;
+  if (erx >= 0 && ery >= 0 && ery < editor_h) {
+    s->cursor = pos_from_xy(s, erx, ery, ch, editor_h);
     if (s->sel_start == s->cursor) s->sel_start = -1;
   }
 }
@@ -1326,12 +1507,14 @@ void csharp_mouse_down(u8 *state, i32 rx, i32 ry, i32 /*cw*/, i32 ch) {
   auto *s = reinterpret_cast<CSharpState *>(state);
   if (s->saveas_open || s->addfile_open) return;
   i32 panel_w = (s->sln_panel_open && s->sln.active) ? SLN_PANEL_W : 0;
-  if (rx < panel_w) return; // in explorer panel, don't start selection
+  if (rx < panel_w || ry < TOOLBAR_H) return;
   i32 fh = gfx::font_h(), STATUS_H = fh + 6, SPLIT_H = 4;
-  i32 editor_h = (ch - STATUS_H - SPLIT_H) * 6 / 10;
+  i32 area_h = ch - TOOLBAR_H;
+  i32 editor_h = (area_h - STATUS_H - SPLIT_H) * 6 / 10;
   i32 erx = rx - panel_w;
-  if (ry < editor_h) {
-    s->cursor = pos_from_xy(s, erx, ry, ch, editor_h);
+  i32 ery = ry - TOOLBAR_H;
+  if (ery < editor_h) {
+    s->cursor = pos_from_xy(s, erx, ery, ch, editor_h);
     s->sel_start = s->cursor;
   }
 }
@@ -1341,9 +1524,11 @@ void csharp_mouse_move(u8 *state, i32 rx, i32 ry, i32 /*cw*/, i32 ch) {
   if (s->saveas_open || s->addfile_open) return;
   i32 panel_w = (s->sln_panel_open && s->sln.active) ? SLN_PANEL_W : 0;
   i32 fh = gfx::font_h(), STATUS_H = fh + 6, SPLIT_H = 4;
-  i32 editor_h = (ch - STATUS_H - SPLIT_H) * 6 / 10;
+  i32 area_h = ch - TOOLBAR_H;
+  i32 editor_h = (area_h - STATUS_H - SPLIT_H) * 6 / 10;
   i32 erx = rx - panel_w;
-  s->cursor = pos_from_xy(s, erx, ry, ch, editor_h);
+  i32 ery = ry - TOOLBAR_H;
+  s->cursor = pos_from_xy(s, erx, ery, ch, editor_h);
 }
 
 void csharp_scroll(u8 *state, i32 delta) {

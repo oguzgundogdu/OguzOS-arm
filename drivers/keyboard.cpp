@@ -189,16 +189,13 @@ const Keymap keymap_uk = {{
 }};
 
 // 2 — Turkish Q layout
-// Key differences from US: keycode 12 (*/-), 13 (-/_), 26 (ğ/Ğ→we use g/G),
-//   27 (ü/Ü→u/U), 39 (ş/Ş→s/S), 40 (i/İ→i/I), 43 (,/;), 51 (ö/Ö→o/O),
-//   52 (ç/Ç→c/C), 53 (./: )
-// Since we only have ASCII, Turkish-specific chars (ğ,ü,ş,ö,ç,ı,İ) are
-// mapped to their closest ASCII equivalents, but punctuation positions match
-// the Turkish Q physical layout.
+// QEMU virtio-keyboard sends Linux keycodes (US physical positions).
+// Letters are the same as US QWERTY. Turkish-specific chars (ğ,ü,ş,ö,ç,ı)
+// are mapped to ASCII equivalents. Punctuation follows Turkish Q positions.
 const Keymap keymap_tr = {{
     0,    0x1B, '1',  '2',  '3', '4', '5', '6',  // 0-7
     '7',  '8',  '9',  '0',  '*', '-', 0x7F, '\t', // 8-15
-    'q',  'w',  'e',  'r',  't', 'y', 'u',  'i',  // 16-23  (ı mapped to i)
+    'q',  'w',  'e',  'r',  't', 'y', 'u',  'i',  // 16-23
     'o',  'p',  'g',  'u',  '\r', 0,  'a',  's',  // 24-31  (ğ→g, ü→u)
     'd',  'f',  'g',  'h',  'j', 'k', 'l',  's',  // 32-39  (ş→s)
     'i',  '"',  0,    ',',  'z', 'x', 'c',  'v',  // 40-47
@@ -214,7 +211,7 @@ const Keymap keymap_tr = {{
     'Q',  'W',  'E',  'R',  'T', 'Y', 'U',  'I',  // 16-23
     'O',  'P',  'G',  'U',  '\r', 0,  'A',  'S',  // 24-31
     'D',  'F',  'G',  'H',  'J', 'K', 'L',  'S',  // 32-39
-    'I',  '<',  0,    ';',  'Z', 'X', 'C',  'V',  // 40-47
+    'I',  '"',  0,    ';',  'Z', 'X', 'C',  'V',  // 40-47
     'B',  'N',  'M',  'O',  'C', ':', 0,    0,    // 48-55
     0,    ' ',  0,    0,    0,   0,   0,    0,    // 56-63
     0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,

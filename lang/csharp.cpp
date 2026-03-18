@@ -2,6 +2,7 @@
 #include "graphics.h"
 #include "string.h"
 #include "syslog.h"
+#include "uart.h"
 
 namespace {
 
@@ -18,6 +19,8 @@ enum Tok : u8 {
   // Keywords
   T_USING, T_CLASS, T_STATIC, T_VOID, T_INT, T_STRING, T_BOOL,
   T_IF, T_ELSE, T_WHILE, T_FOR, T_RETURN, T_TRUE, T_FALSE, T_NULL, T_NEW,
+  T_PUBLIC, T_PRIVATE, T_PROTECTED, T_OVERRIDE, T_VIRTUAL, T_ABSTRACT, T_READONLY, T_CONST, T_NAMESPACE,
+  T_VAR, T_CHAR, T_FLOAT, T_DOUBLE, T_OBJECT,
   // Operators
   T_PLUS, T_MINUS, T_STAR, T_SLASH, T_PERCENT,
   T_ASSIGN, T_EQ, T_NEQ, T_LT, T_GT, T_LTE, T_GTE,
@@ -84,6 +87,11 @@ i32 scope_depth;
 
 Func funcs[MAX_FUNCS];
 i32 func_count;
+
+// ── Class name registry (populated by pre-scan) ────────────────────────────
+constexpr i32 MAX_CLASSES = 8;
+char class_names[MAX_CLASSES][32];
+i32 class_count;
 
 char *out;
 i32 out_cap;
@@ -271,6 +279,35 @@ bool is_widget_type(const char *name) {
          str::cmp(name, "Panel") == 0;
 }
 
+// Check if a name is a declared class in the current source
+bool is_declared_class(const char *name) {
+  for (i32 i = 0; i < class_count; i++)
+    if (str::cmp(class_names[i], name) == 0) return true;
+  return false;
+}
+
+// Check if identifier is a valid type (widget, declared class, or known API class)
+bool is_valid_type_ident(const char *name) {
+  return is_widget_type(name) || is_declared_class(name) ||
+         str::cmp(name, "Console") == 0 || str::cmp(name, "Gfx") == 0 ||
+         str::cmp(name, "App") == 0;
+}
+
+// Pre-scan tokens to find all class declarations
+void prescan_classes() {
+  class_count = 0;
+  for (i32 i = 0; i < tok_count - 1 && class_count < MAX_CLASSES; i++) {
+    if (tokens[i].type == T_CLASS && tokens[i + 1].type == T_IDENT) {
+      Token &t = tokens[i + 1];
+      i32 len = t.len;
+      if (len > 31) len = 31;
+      for (i32 j = 0; j < len; j++) class_names[class_count][j] = src[t.pos + j];
+      class_names[class_count][len] = '\0';
+      class_count++;
+    }
+  }
+}
+
 WType widget_type_from_name(const char *name) {
   if (str::cmp(name, "Label") == 0) return W_LABEL;
   if (str::cmp(name, "Button") == 0) return W_BUTTON;
@@ -282,6 +319,7 @@ WType widget_type_from_name(const char *name) {
 
 // ── Output helpers ──────────────────────────────────────────────────────────
 void emit(const char *s) {
+  if (gui_mode) uart::puts(s); // echo to serial console in GUI mode
   while (*s && out_len < out_cap - 1)
     out[out_len++] = *s++;
   out[out_len] = '\0';
@@ -411,6 +449,20 @@ bool tokenize() {
       else if (src_eq(start, len, "false")) type = T_FALSE;
       else if (src_eq(start, len, "null")) type = T_NULL;
       else if (src_eq(start, len, "new")) type = T_NEW;
+      else if (src_eq(start, len, "public")) type = T_PUBLIC;
+      else if (src_eq(start, len, "private")) type = T_PRIVATE;
+      else if (src_eq(start, len, "protected")) type = T_PROTECTED;
+      else if (src_eq(start, len, "override")) type = T_OVERRIDE;
+      else if (src_eq(start, len, "virtual")) type = T_VIRTUAL;
+      else if (src_eq(start, len, "abstract")) type = T_ABSTRACT;
+      else if (src_eq(start, len, "readonly")) type = T_READONLY;
+      else if (src_eq(start, len, "const")) type = T_CONST;
+      else if (src_eq(start, len, "namespace")) type = T_NAMESPACE;
+      else if (src_eq(start, len, "var")) type = T_VAR;
+      else if (src_eq(start, len, "char")) type = T_CHAR;
+      else if (src_eq(start, len, "float")) type = T_FLOAT;
+      else if (src_eq(start, len, "double")) type = T_DOUBLE;
+      else if (src_eq(start, len, "object")) type = T_OBJECT;
 
       add_tok(type, start, len);
       continue;
@@ -520,10 +572,17 @@ Func *find_func(const char *name) {
 
 VType parse_type_kw() {
   if (match(T_VOID)) return V_VOID;
-  if (match(T_INT)) return V_INT;
+  if (match(T_INT) || match(T_CHAR) || match(T_FLOAT) || match(T_DOUBLE)) return V_INT;
   if (match(T_STRING)) return V_STRING;
   if (match(T_BOOL)) return V_BOOL;
+  if (match(T_VAR) || match(T_OBJECT)) return V_INT; // var/object → infer from assignment
   return V_VOID;
+}
+
+// Check if token is a type keyword
+bool is_type_keyword(u8 t) {
+  return t == T_VOID || t == T_INT || t == T_STRING || t == T_BOOL ||
+         t == T_VAR || t == T_CHAR || t == T_FLOAT || t == T_DOUBLE || t == T_OBJECT;
 }
 
 // ── Forward declarations ────────────────────────────────────────────────────
@@ -576,7 +635,23 @@ Value parse_primary() {
     expect(T_LPAREN);
 
     WType wt = widget_type_from_name(tname);
-    if (wt == W_NONE) { error("unknown type for new"); expect(T_RPAREN); return make_void(); }
+    if (wt == W_NONE) {
+      // Not a widget — check if it's a declared class (user-defined type)
+      if (is_declared_class(tname)) {
+        // Skip constructor arguments and return a placeholder value
+        i32 depth = 1;
+        while (depth > 0 && !at(T_EOF)) {
+          if (match(T_LPAREN)) depth++;
+          else if (at(T_RPAREN)) { depth--; if (depth > 0) tp++; }
+          else tp++;
+        }
+        expect(T_RPAREN);
+        return make_int(1); // placeholder object reference
+      }
+      error("unknown type for new");
+      expect(T_RPAREN);
+      return make_void();
+    }
 
     i32 idx = alloc_widget(wt);
     if (idx < 0) { error("too many widgets"); expect(T_RPAREN); return make_void(); }
@@ -835,6 +910,67 @@ Value parse_primary() {
         error("unknown widget method");
         return make_void();
       }
+
+      // Non-widget variable with dot: obj.Method() → call Method as a function
+      if (wv) {
+        tp++; // skip dot
+        char method[32];
+        tok_text(cur(), method, 32);
+        tp++; // skip method name
+
+        // Look up method as a declared function
+        Func *fn = find_func(method);
+        if (fn && at(T_LPAREN)) {
+          expect(T_LPAREN);
+          // Parse arguments (pass them as params if the function accepts them)
+          Value args[6];
+          i32 argc = 0;
+          while (!at(T_RPAREN) && !at(T_EOF) && argc < 6) {
+            args[argc++] = parse_expr();
+            if (!match(T_COMMA)) break;
+          }
+          expect(T_RPAREN);
+
+          // Validate argument count
+          if (argc != fn->param_count) {
+            char errbuf[64];
+            str::cpy(errbuf, "'");
+            str::cat(errbuf, method);
+            str::cat(errbuf, "' expects ");
+            char tmp[8]; tmp[0] = '0' + static_cast<char>(fn->param_count); tmp[1] = '\0';
+            str::cat(errbuf, tmp);
+            str::cat(errbuf, " arg(s), got ");
+            tmp[0] = '0' + static_cast<char>(argc); tmp[1] = '\0';
+            str::cat(errbuf, tmp);
+            error(errbuf);
+            return make_void();
+          }
+
+          // Call the function
+          scope_depth++;
+          for (i32 i = 0; i < fn->param_count; i++)
+            add_var(fn->params[i], args[i]);
+          i32 saved_tp = tp;
+          tp = fn->tok_start;
+          had_return = false;
+          call_depth++;
+          exec_block();
+          call_depth--;
+          Value ret = return_val;
+          had_return = false;
+          return_val = make_void();
+          pop_scope();
+          tp = saved_tp;
+          return ret;
+        }
+        // Property access — just skip and return void
+        if (at(T_LPAREN)) {
+          expect(T_LPAREN);
+          while (!at(T_RPAREN) && !at(T_EOF)) { parse_expr(); if (!match(T_COMMA)) break; }
+          expect(T_RPAREN);
+        }
+        return make_void();
+      }
     }
 
     // Function call
@@ -1081,8 +1217,9 @@ void exec_block() {
 void exec_stmt() {
   if (had_error || had_return) return;
 
-  // Variable declaration: int x = expr; / string s = expr; / bool b = expr;
-  if (at(T_INT) || at(T_STRING) || at(T_BOOL)) {
+  // Variable declaration: int x = expr; / string s = expr; / bool b = expr; / var x = expr;
+  if (at(T_INT) || at(T_STRING) || at(T_BOOL) || at(T_VAR) ||
+      at(T_CHAR) || at(T_FLOAT) || at(T_DOUBLE) || at(T_OBJECT)) {
     VType vt = parse_type_kw();
     char name[32];
     tok_text(cur(), name, 32);
@@ -1101,7 +1238,7 @@ void exec_stmt() {
     return;
   }
 
-  // Widget type declaration: Button btn; / Button btn = new Button(...);
+  // Widget/custom type declaration: Button btn; / Button btn = new Button(...);
   if (at(T_IDENT) && peek(1).type == T_IDENT &&
       (peek(2).type == T_SEMI || peek(2).type == T_ASSIGN)) {
     char tname[32];
@@ -1119,9 +1256,17 @@ void exec_stmt() {
       expect(T_SEMI);
       return;
     }
+    if (!is_valid_type_ident(tname)) {
+      char errbuf[64];
+      str::cpy(errbuf, "unknown type '");
+      str::cat(errbuf, tname);
+      str::cat(errbuf, "'");
+      error(errbuf);
+      return;
+    }
   }
 
-  // if statement
+  // if / else if / else statement
   if (match(T_IF)) {
     expect(T_LPAREN);
     Value cond = parse_expr();
@@ -1129,11 +1274,19 @@ void exec_stmt() {
     bool truthy = cond.type == V_BOOL ? cond.bval : (cond.ival != 0);
 
     if (truthy) {
-      exec_block();
-      if (match(T_ELSE)) skip_block();
+      if (at(T_LBRACE)) exec_block(); else exec_stmt();
+      if (match(T_ELSE)) {
+        if (at(T_LBRACE)) skip_block();
+        else if (at(T_IF)) { /* else if: skip the whole chain */ i32 d = 0; while (!at(T_EOF)) { if (at(T_LBRACE)) { d++; tp++; } else if (at(T_RBRACE)) { d--; tp++; if (d <= 0 && !match(T_ELSE)) break; } else tp++; } }
+        else { /* single-stmt else, skip it */ while (!at(T_SEMI) && !at(T_EOF)) tp++; match(T_SEMI); }
+      }
     } else {
-      skip_block();
-      if (match(T_ELSE)) exec_block();
+      if (at(T_LBRACE)) skip_block(); else { while (!at(T_SEMI) && !at(T_EOF)) tp++; match(T_SEMI); }
+      if (match(T_ELSE)) {
+        if (at(T_LBRACE)) exec_block();
+        else if (at(T_IF)) exec_stmt(); // else if → recurse
+        else exec_stmt(); // single-stmt else
+      }
     }
     return;
   }
@@ -1162,7 +1315,7 @@ void exec_stmt() {
     scope_depth++;
 
     // Init
-    if (at(T_INT) || at(T_STRING) || at(T_BOOL)) {
+    if (is_type_keyword(cur().type) && cur().type != T_VOID) {
       VType vt = parse_type_kw();
       char name[32];
       tok_text(cur(), name, 32);
@@ -1313,18 +1466,41 @@ void exec_stmt() {
 }
 
 // ── Top-level parsing ───────────────────────────────────────────────────────
+// Skip C# modifiers: public, private, protected, override, virtual, abstract, readonly, const
+bool is_modifier(u8 t) {
+  return t == T_PUBLIC || t == T_PRIVATE || t == T_PROTECTED ||
+         t == T_OVERRIDE || t == T_VIRTUAL || t == T_ABSTRACT ||
+         t == T_READONLY || t == T_CONST;
+}
+void skip_modifiers() {
+  while (is_modifier(cur().type)) tp++;
+}
+
 void scan_functions() {
   // First pass: find all static methods
   tp = 0;
   func_count = 0;
 
   while (!at(T_EOF) && !had_error) {
+    // Skip modifiers (public, private, etc.)
+    skip_modifiers();
+
     // Skip 'using X.Y.Z;'
     if (match(T_USING)) {
       while (!at(T_SEMI) && !at(T_EOF)) tp++;
       match(T_SEMI);
       continue;
     }
+
+    // Skip 'namespace X {'  (treat contents as top-level)
+    if (match(T_NAMESPACE)) {
+      while (!at(T_LBRACE) && !at(T_EOF)) tp++;
+      match(T_LBRACE);
+      continue;
+    }
+
+    // Skip namespace closing brace
+    if (match(T_RBRACE)) continue;
 
     // class Name {
     if (match(T_CLASS)) {
@@ -1333,89 +1509,150 @@ void scan_functions() {
 
       // Methods inside class
       while (!at(T_RBRACE) && !at(T_EOF) && !had_error) {
-        if (match(T_STATIC)) {
-          // Peek ahead to determine: field or method?
-          // Pattern: static <type> <name> ( → method
-          // Pattern: static <type> <name> ; or = → field
-          i32 saved = tp;
+        // Skip modifiers (public, private, etc.) and 'static'
+        skip_modifiers();
+        match(T_STATIC);
 
-          // Skip type token (could be keyword or ident)
+        if (at(T_RBRACE) || at(T_EOF)) break;
+
+        // Peek ahead to determine: field or method?
+        // Pattern: <type> <name> ( → method
+        // Pattern: <type> <name> ; or = → field
+        // Type can be a keyword (void, int, string, bool...) or an identifier
+        i32 saved = tp;
+        bool is_method = false;
+        bool is_field = false;
+        if (is_type_keyword(cur().type) || at(T_IDENT)) {
           tp++; // skip type
-          // If next is also ident followed by '(', it's a method
-          bool is_method = false;
-          bool is_field = false;
           if (at(T_IDENT)) {
-            // Could be name — check what follows
             tp++; // skip name
             if (at(T_LPAREN)) is_method = true;
             else is_field = true;
           }
-          tp = saved; // restore
+        }
+        tp = saved; // restore
 
-          if (is_method) {
-            if (func_count >= MAX_FUNCS) { error("too many functions"); return; }
-            Func &fn = funcs[func_count];
+        if (is_method) {
+          if (func_count >= MAX_FUNCS) { error("too many functions"); return; }
+          Func &fn = funcs[func_count];
 
-            // Parse return type
-            if (at(T_INT) || at(T_STRING) || at(T_BOOL) || at(T_VOID)) {
-              fn.ret_type = parse_type_kw();
-            } else {
-              fn.ret_type = V_VOID;
-              tp++; // skip widget/unknown type ident
+          // Parse return type
+          if (is_type_keyword(cur().type)) {
+            fn.ret_type = parse_type_kw();
+          } else if (at(T_IDENT)) {
+            char rtn[32]; tok_text(cur(), rtn, 32);
+            if (!is_valid_type_ident(rtn) && !is_widget_type(rtn)) {
+              char errbuf[64];
+              str::cpy(errbuf, "unknown return type '");
+              str::cat(errbuf, rtn);
+              str::cat(errbuf, "'");
+              error(errbuf);
+              return;
             }
-
-            tok_text(cur(), fn.name, 32);
-            expect(T_IDENT);
-            expect(T_LPAREN);
-
-            fn.param_count = 0;
-            while (!at(T_RPAREN) && !at(T_EOF) && fn.param_count < 6) {
-              // Parse param type
-              if (at(T_INT) || at(T_STRING) || at(T_BOOL)) {
-                fn.param_types[fn.param_count] = parse_type_kw();
-              } else {
-                fn.param_types[fn.param_count] = V_INT;
-                tp++; // skip unknown type
-              }
-              tok_text(cur(), fn.params[fn.param_count], 32);
-              expect(T_IDENT);
-              fn.param_count++;
-              if (!match(T_COMMA)) break;
-            }
-            expect(T_RPAREN);
-
-            fn.tok_start = tp;
-            func_count++;
-            skip_block();
-          } else if (is_field) {
-            // Field declaration: register as global variable, skip to ;
-            bool is_wtype = false;
-            if (at(T_IDENT)) {
-              char tn[32]; tok_text(cur(), tn, 32);
-              is_wtype = is_widget_type(tn);
-            }
-            tp++; // skip type
-            char vn[32]; tok_text(cur(), vn, 32);
-            tp++; // skip name
-            if (is_wtype)
-              add_var(vn, make_widget(-1));
-            else
-              add_var(vn, make_int(0));
-            // Skip to semicolon (skip any = initializer)
-            while (!at(T_SEMI) && !at(T_EOF)) tp++;
-            match(T_SEMI);
+            fn.ret_type = V_VOID;
+            tp++;
           } else {
-            tp++; // skip unknown
+            error("expected return type in method declaration");
+            return;
           }
+
+          tok_text(cur(), fn.name, 32);
+          expect(T_IDENT);
+          expect(T_LPAREN);
+
+          fn.param_count = 0;
+          while (!at(T_RPAREN) && !at(T_EOF) && !had_error && fn.param_count < 6) {
+            if (is_type_keyword(cur().type)) {
+              fn.param_types[fn.param_count] = parse_type_kw();
+            } else if (at(T_IDENT)) {
+              char ptn[32]; tok_text(cur(), ptn, 32);
+              if (!is_valid_type_ident(ptn) && !is_widget_type(ptn)) {
+                char errbuf[64];
+                str::cpy(errbuf, "unknown parameter type '");
+                str::cat(errbuf, ptn);
+                str::cat(errbuf, "'");
+                error(errbuf);
+                return;
+              }
+              fn.param_types[fn.param_count] = V_INT;
+              tp++;
+            } else {
+              error("expected parameter type");
+              return;
+            }
+            if (!at(T_IDENT)) {
+              error("expected parameter name");
+              return;
+            }
+            tok_text(cur(), fn.params[fn.param_count], 32);
+            expect(T_IDENT);
+            fn.param_count++;
+            if (!match(T_COMMA)) break;
+          }
+          if (had_error) return;
+          expect(T_RPAREN);
+
+          fn.tok_start = tp;
+          func_count++;
+          skip_block();
+        } else if (is_field) {
+          // Field declaration: register as global variable, skip to ;
+          bool is_wtype = false;
+          if (at(T_IDENT)) {
+            char tn[32]; tok_text(cur(), tn, 32);
+            is_wtype = is_widget_type(tn);
+            if (!is_wtype && !is_valid_type_ident(tn)) {
+              char errbuf[64];
+              str::cpy(errbuf, "unknown type '");
+              str::cat(errbuf, tn);
+              str::cat(errbuf, "'");
+              error(errbuf);
+              return;
+            }
+          } else if (!is_type_keyword(cur().type)) {
+            error("expected type in field declaration");
+            return;
+          }
+          tp++; // skip type
+          char vn[32]; tok_text(cur(), vn, 32);
+          tp++; // skip name
+          if (is_wtype)
+            add_var(vn, make_widget(-1));
+          else
+            add_var(vn, make_int(0));
+          while (!at(T_SEMI) && !at(T_EOF)) tp++;
+          match(T_SEMI);
         } else {
-          tp++; // skip unknown token
+          // Not a valid member declaration
+          char errbuf[64];
+          str::cpy(errbuf, "unexpected in class: '");
+          if (at(T_IDENT)) {
+            char tok[24]; tok_text(cur(), tok, 24);
+            str::cat(errbuf, tok);
+          } else {
+            str::cat(errbuf, "?");
+          }
+          str::cat(errbuf, "'");
+          error(errbuf);
+          return;
         }
       }
       match(T_RBRACE);
       continue;
     }
 
-    tp++; // skip unrecognized top-level token
+    // Unexpected top-level token
+    char errbuf[64];
+    str::cpy(errbuf, "unexpected token at top level: '");
+    if (at(T_IDENT)) {
+      char tok[20]; tok_text(cur(), tok, 20);
+      str::cat(errbuf, tok);
+    } else {
+      str::cat(errbuf, "?");
+    }
+    str::cat(errbuf, "'");
+    error(errbuf);
+    return;
   }
 }
 
@@ -1485,6 +1722,7 @@ bool run(const char *source, char *out_buf, i32 out_size) {
   out[0] = '\0';
 
   if (!tokenize()) return false;
+  prescan_classes();
   scan_functions();
   if (had_error) return false;
 
@@ -1512,6 +1750,7 @@ bool init(const char *source) {
   if (!tokenize()) { syslog::error("cs", "tokenize failed"); return false; }
   syslog::info("cs", "tokens=%d", tok_count);
 
+  prescan_classes();
   scan_functions();
   syslog::info("cs", "funcs=%d vars=%d widgets=%d err=%d",
                func_count, var_count, widget_count, had_error ? 1 : 0);
@@ -1574,6 +1813,9 @@ void call_arrow(char dir) {
 }
 
 bool should_close() { return close_requested; }
+
+bool has_error() { return had_error; }
+const char *get_error() { return gui_out_buf; }
 
 void gui_cleanup() {
   gui_mode = false;
