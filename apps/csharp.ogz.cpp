@@ -25,6 +25,25 @@ constexpr i32 SLN_DIR_MAX = 128;
 constexpr i32 SLN_NAME_MAX = 64;
 constexpr i32 SLN_PANEL_W = 170;
 
+// ── Autocomplete ─────────────────────────────────────────────────────────
+constexpr i32 AC_MAX = 20;
+constexpr i32 AC_LABEL = 32;
+constexpr i32 AC_VIS = 8;
+constexpr u32 COL_AC_BG = 0x00252540;
+constexpr u32 COL_AC_SEL = 0x00394060;
+constexpr u32 COL_AC_BORDER = 0x00555577;
+constexpr u32 COL_AC_TEXT = 0x00CDD6F4;
+constexpr u32 COL_AC_DIM = 0x008888AA;
+
+struct AcItem { char label[AC_LABEL]; };
+struct AcState {
+  bool open;
+  AcItem items[AC_MAX];
+  i32 count, sel, scroll, trigger_pos;
+  bool dot_mode;
+  char target[AC_LABEL];
+};
+
 struct SlnFileEntry {
   char name[SLN_FNAME_MAX];
   bool dirty;
@@ -74,6 +93,8 @@ struct CSharpState {
   char slnname_buf[64];
   i32 slnname_cursor;
   i32 slnname_type; // which template type for the solution
+  // Autocomplete
+  AcState ac;
 };
 
 static_assert(sizeof(CSharpState) <= 8192, "CSharpState too large");
@@ -502,6 +523,347 @@ i32 pos_from_xy(CSharpState *s, i32 rx, i32 ry, i32 /*ch*/, i32 split_y) {
   return ls + col;
 }
 
+// ── Autocomplete engine ──────────────────────────────────────────────────────
+
+bool is_ident_ch(char c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+         (c >= '0' && c <= '9') || c == '_';
+}
+
+i32 word_before(const char *src, i32 pos, char *out, i32 max) {
+  i32 s = pos;
+  while (s > 0 && is_ident_ch(src[s - 1])) s--;
+  i32 len = pos - s;
+  if (len >= max) len = max - 1;
+  for (i32 i = 0; i < len; i++) out[i] = src[s + i];
+  out[len] = '\0';
+  return len;
+}
+
+struct MethodTable { const char *type; const char *methods[12]; };
+const MethodTable METHOD_TABLES[] = {
+  {"Console", {"WriteLine","Write",nullptr}},
+  {"Gfx", {"Clear","FillRect","Rect","DrawText","Pixel","Line","HLine",nullptr}},
+  {"App", {"Close","Width","Height",nullptr}},
+  {"Label", {"Draw","SetText","GetText","SetPos","SetSize","SetColor",nullptr}},
+  {"Button", {"Draw","SetText","GetText","HitTest","SetPos","SetSize","SetColor",nullptr}},
+  {"TextBox", {"Draw","SetText","GetText","Click","Key","Focus","HitTest","SetPos","SetSize","SetColor",nullptr}},
+  {"CheckBox", {"Draw","SetText","GetText","Toggle","IsChecked","HitTest","SetPos","SetColor",nullptr}},
+  {"Panel", {"Draw","SetText","SetColor","SetPos","SetSize",nullptr}},
+};
+constexpr i32 MT_COUNT = 8;
+
+bool find_var_type(const char *src, i32 len, const char *name, char *out, i32 max) {
+  i32 nlen = static_cast<i32>(str::len(name));
+  for (i32 i = 0; i < len - nlen; i++) {
+    if (str::ncmp(src + i, name, static_cast<usize>(nlen)) != 0) continue;
+    if (i + nlen < len && is_ident_ch(src[i + nlen])) continue;
+    if (i > 0 && is_ident_ch(src[i - 1])) continue;
+    // Found the variable name — look backward for type
+    i32 j = i - 1;
+    while (j >= 0 && (src[j] == ' ' || src[j] == '\t')) j--;
+    if (j < 0) continue;
+    i32 we = j + 1;
+    while (j >= 0 && is_ident_ch(src[j])) j--;
+    j++;
+    i32 wl = we - j;
+    if (wl <= 0 || wl >= max) continue;
+    char cand[AC_LABEL];
+    for (i32 k = 0; k < wl; k++) cand[k] = src[j + k];
+    cand[wl] = '\0';
+    // Accept any identifier that starts with uppercase (type name convention)
+    if (cand[0] >= 'A' && cand[0] <= 'Z') {
+      str::ncpy(out, cand, static_cast<usize>(max - 1));
+      return true;
+    }
+  }
+  return false;
+}
+
+// Check if a class name exists in source (looks for "class ClassName")
+bool is_class_in_src(const char *src, i32 len, const char *name) {
+  i32 nlen = static_cast<i32>(str::len(name));
+  const char *pat = "class ";
+  i32 plen = 6;
+  for (i32 i = 0; i <= len - plen - nlen; i++) {
+    if (str::ncmp(src + i, pat, static_cast<usize>(plen)) != 0) continue;
+    if (str::ncmp(src + i + plen, name, static_cast<usize>(nlen)) != 0) continue;
+    if (i + plen + nlen < len && is_ident_ch(src[i + plen + nlen])) continue;
+    return true;
+  }
+  return false;
+}
+
+bool prefix_match(const char *word, const char *prefix) {
+  for (i32 i = 0; prefix[i]; i++) {
+    char a = word[i], b = prefix[i];
+    if (!a) return false;
+    if (a >= 'A' && a <= 'Z') a += 32;
+    if (b >= 'A' && b <= 'Z') b += 32;
+    if (a != b) return false;
+  }
+  return true;
+}
+
+void ac_add(AcState *ac, const char *label) {
+  if (ac->count >= AC_MAX) return;
+  str::ncpy(ac->items[ac->count].label, label, AC_LABEL - 1);
+  ac->count++;
+}
+
+// Scan source for methods/fields inside "class <className> { ... }"
+void scan_class_members(const char *src, i32 len, const char *cls,
+                        AcState *ac, const char *prefix) {
+  i32 clen = static_cast<i32>(str::len(cls));
+  for (i32 i = 0; i <= len - 6 - clen; i++) {
+    if (str::ncmp(src + i, "class ", 6) != 0) continue;
+    if (str::ncmp(src + i + 6, cls, static_cast<usize>(clen)) != 0) continue;
+    if (i + 6 + clen < len && is_ident_ch(src[i + 6 + clen])) continue;
+    i32 j = i + 6 + clen;
+    while (j < len && src[j] != '{') j++;
+    if (j >= len) return;
+    j++;
+    i32 depth = 1;
+    while (j < len && depth > 0) {
+      if (src[j] == '{') depth++;
+      else if (src[j] == '}') { depth--; if (depth == 0) break; }
+      // Only scan identifiers at class body level (depth 1), not inside method bodies
+      if (depth == 1 && is_ident_ch(src[j]) && (j == 0 || !is_ident_ch(src[j - 1]))) {
+        i32 ws = j;
+        while (j < len && is_ident_ch(src[j])) j++;
+        i32 wl = j - ws;
+        i32 k = j;
+        while (k < len && (src[k] == ' ' || src[k] == '\t')) k++;
+        if (k < len && src[k] == '(') {
+          char mname[AC_LABEL];
+          if (wl < AC_LABEL - 1) {
+            for (i32 m = 0; m < wl; m++) mname[m] = src[ws + m];
+            mname[wl] = '\0';
+            if (str::cmp(mname, "if") != 0 && str::cmp(mname, "while") != 0 &&
+                str::cmp(mname, "for") != 0 && str::cmp(mname, "new") != 0 &&
+                str::cmp(mname, "return") != 0 && str::cmp(mname, "class") != 0 &&
+                str::cmp(mname, "static") != 0 && str::cmp(mname, "void") != 0 &&
+                str::cmp(mname, "int") != 0 && str::cmp(mname, "string") != 0 &&
+                str::cmp(mname, "bool") != 0 && str::cmp(mname, cls) != 0) {
+              // Check access modifiers — scan backward on this line for private/protected
+              bool is_private = false;
+              i32 ls = ws;
+              while (ls > 0 && src[ls - 1] != '\n') ls--; // find line start
+              // Scan tokens on this line before the method name
+              i32 p = ls;
+              while (p < ws) {
+                while (p < ws && !is_ident_ch(src[p])) p++;
+                if (p >= ws) break;
+                i32 tw = p;
+                while (p < ws && is_ident_ch(src[p])) p++;
+                i32 tl = p - tw;
+                if ((tl == 7 && str::ncmp(src + tw, "private", 7) == 0) ||
+                    (tl == 9 && str::ncmp(src + tw, "protected", 9) == 0))
+                  is_private = true;
+              }
+              if (!is_private) {
+                if (!prefix[0] || prefix_match(mname, prefix)) {
+                  bool dup = false;
+                  for (i32 d = 0; d < ac->count; d++)
+                    if (str::cmp(ac->items[d].label, mname) == 0) { dup = true; break; }
+                  if (!dup) ac_add(ac, mname);
+                }
+              }
+            }
+          }
+        }
+      } else j++;
+    }
+    return;
+  }
+}
+
+void ac_populate_dot(AcState *ac, const char *target, const char *prefix,
+                     const char *src = nullptr, i32 src_len = 0) {
+  ac->count = 0; ac->sel = 0; ac->scroll = 0;
+  // Built-in types first
+  for (i32 t = 0; t < MT_COUNT; t++) {
+    if (str::cmp(METHOD_TABLES[t].type, target) != 0) continue;
+    for (i32 m = 0; METHOD_TABLES[t].methods[m]; m++) {
+      if (!prefix[0] || prefix_match(METHOD_TABLES[t].methods[m], prefix))
+        ac_add(ac, METHOD_TABLES[t].methods[m]);
+    }
+    break;
+  }
+  // User-defined class members
+  if (ac->count == 0 && src && src_len > 0)
+    scan_class_members(src, src_len, target, ac, prefix);
+  ac->open = (ac->count > 0);
+}
+
+void ac_populate_general(AcState *ac, const char *src, i32 src_len, const char *prefix) {
+  ac->count = 0; ac->sel = 0; ac->scroll = 0;
+  if (!prefix[0]) return;
+  const char *all[] = {
+    "using","class","static","if","else","while","for","return","new","null",
+    "namespace","public","private","protected","override","virtual","abstract",
+    "readonly","const","void","int","string","bool","char","float","double",
+    "var","object","true","false",
+    "Console","Gfx","App","Label","Button","TextBox","CheckBox","Panel",
+    "Main","OnDraw","OnClick","OnKey","OnArrow",
+    nullptr
+  };
+  for (i32 i = 0; all[i]; i++) {
+    if (prefix_match(all[i], prefix) && str::cmp(all[i], prefix) != 0)
+      ac_add(ac, all[i]);
+  }
+  // Scan source for identifiers
+  i32 i = 0;
+  while (i < src_len && ac->count < AC_MAX) {
+    if (is_ident_ch(src[i])) {
+      i32 ws = i;
+      while (i < src_len && is_ident_ch(src[i])) i++;
+      i32 wl = i - ws;
+      if (wl >= 2 && wl < AC_LABEL - 1) {
+        char word[AC_LABEL];
+        for (i32 k = 0; k < wl; k++) word[k] = src[ws + k];
+        word[wl] = '\0';
+        if (prefix_match(word, prefix) && str::cmp(word, prefix) != 0) {
+          bool dup = false;
+          for (i32 d = 0; d < ac->count; d++)
+            if (str::cmp(ac->items[d].label, word) == 0) { dup = true; break; }
+          if (!dup) ac_add(ac, word);
+        }
+      }
+    } else i++;
+  }
+  ac->open = (ac->count > 0);
+}
+
+void ac_accept(CSharpState *s) {
+  if (!s->ac.open || s->ac.count == 0) return;
+  const char *text = s->ac.items[s->ac.sel].label;
+  i32 tlen = static_cast<i32>(str::len(text));
+  i32 del = s->cursor - s->ac.trigger_pos;
+  if (del > 0) {
+    for (i32 i = s->ac.trigger_pos; i < s->src_len - del; i++)
+      s->src[i] = s->src[i + del];
+    s->src_len -= del;
+    s->cursor = s->ac.trigger_pos;
+  }
+  if (s->src_len + tlen < SRC_MAX) {
+    for (i32 i = s->src_len; i >= s->cursor; i--)
+      s->src[i + tlen] = s->src[i];
+    for (i32 i = 0; i < tlen; i++)
+      s->src[s->cursor + i] = text[i];
+    s->cursor += tlen;
+    s->src_len += tlen;
+    s->src[s->src_len] = '\0';
+    s->dirty = true;
+  }
+  s->ac.open = false;
+}
+
+void ac_update(CSharpState *s) {
+  if (!s->ac.open) return;
+  i32 plen = s->cursor - s->ac.trigger_pos;
+  if (plen < 0 || plen >= AC_LABEL) { s->ac.open = false; return; }
+  char prefix[AC_LABEL];
+  for (i32 i = 0; i < plen; i++) prefix[i] = s->src[s->ac.trigger_pos + i];
+  prefix[plen] = '\0';
+  for (i32 i = 0; i < plen; i++) {
+    if (!is_ident_ch(prefix[i])) { s->ac.open = false; return; }
+  }
+  if (s->ac.dot_mode) {
+    // Forward-declared; defined below
+    ac_populate_dot(&s->ac, s->ac.target, prefix, s->src, s->src_len);
+    // If no results from current file and in a solution, scan other files
+    if (!s->ac.open && s->sln.active) {
+      char old[256]; fs::get_cwd(old, sizeof(old));
+      fs::cd(s->sln.dir);
+      for (i32 f = 0; f < s->sln.file_count && !s->ac.open; f++) {
+        if (f == s->sln.active_file) continue;
+        const char *content = fs::cat(s->sln.files[f].name);
+        if (!content) continue;
+        i32 cl = static_cast<i32>(str::len(content));
+        s->ac.count = 0; s->ac.sel = 0; s->ac.scroll = 0;
+        scan_class_members(content, cl, s->ac.target, &s->ac, prefix);
+        if (s->ac.count > 0) s->ac.open = true;
+      }
+      fs::cd(old);
+    }
+  } else {
+    ac_populate_general(&s->ac, s->src, s->src_len, prefix);
+  }
+}
+
+// Search all solution files for class members (falls back to current src only)
+void ac_populate_dot_sln(CSharpState *s, const char *target, const char *prefix) {
+  // First try built-in types (no source needed)
+  ac_populate_dot(&s->ac, target, prefix, s->src, s->src_len);
+  if (s->ac.open) return;
+
+  // If in a solution, scan other files for the class definition
+  if (s->sln.active) {
+    char old[256]; fs::get_cwd(old, sizeof(old));
+    fs::cd(s->sln.dir);
+    for (i32 f = 0; f < s->sln.file_count && !s->ac.open; f++) {
+      if (f == s->sln.active_file) continue; // already checked via s->src
+      const char *content = fs::cat(s->sln.files[f].name);
+      if (!content) continue;
+      i32 clen = static_cast<i32>(str::len(content));
+      scan_class_members(content, clen, target, &s->ac, prefix);
+      if (s->ac.count > 0) s->ac.open = true;
+    }
+    fs::cd(old);
+  }
+}
+
+void ac_trigger_dot(CSharpState *s) {
+  i32 dot_pos = s->cursor - 1;
+  if (dot_pos < 1) return;
+  char word[AC_LABEL];
+  i32 wl = word_before(s->src, dot_pos, word, AC_LABEL);
+  if (wl == 0) return;
+  const char *type = nullptr;
+  // Check built-in static classes
+  const char *statics[] = {"Console","Gfx","App",nullptr};
+  for (i32 i = 0; statics[i]; i++) {
+    if (str::cmp(word, statics[i]) == 0) { type = statics[i]; break; }
+  }
+  // Check if it's a user-defined class name (for static calls) — check all files
+  if (!type) {
+    if (is_class_in_src(s->src, s->src_len, word)) {
+      type = word;
+    } else if (s->sln.active) {
+      char old[256]; fs::get_cwd(old, sizeof(old));
+      fs::cd(s->sln.dir);
+      for (i32 f = 0; f < s->sln.file_count; f++) {
+        if (f == s->sln.active_file) continue;
+        const char *content = fs::cat(s->sln.files[f].name);
+        if (content && is_class_in_src(content, static_cast<i32>(str::len(content)), word)) {
+          type = word; break;
+        }
+      }
+      fs::cd(old);
+    }
+  }
+  // Check if it's a variable with a known type
+  char tbuf[AC_LABEL];
+  if (!type && find_var_type(s->src, s->src_len, word, tbuf, AC_LABEL))
+    type = tbuf;
+  if (!type) return;
+  s->ac.dot_mode = true;
+  str::ncpy(s->ac.target, type, AC_LABEL - 1);
+  s->ac.trigger_pos = s->cursor;
+  ac_populate_dot_sln(s, type, "");
+}
+
+void ac_trigger_general(CSharpState *s) {
+  char prefix[AC_LABEL];
+  i32 plen = word_before(s->src, s->cursor, prefix, AC_LABEL);
+  if (plen < 2) { s->ac.open = false; return; }
+  s->ac.trigger_pos = s->cursor - plen;
+  s->ac.dot_mode = false;
+  s->ac.target[0] = '\0';
+  ac_populate_general(&s->ac, s->src, s->src_len, prefix);
+}
+
 // ── Syntax highlighting ─────────────────────────────────────────────────────
 bool is_kw(const char *word) {
   const char *kws[] = {"using","class","static","if","else","while","for",
@@ -714,6 +1076,11 @@ void csharp_open(u8 *state) {
   s->slnname_buf[0] = '\0';
   s->slnname_cursor = 0;
   s->slnname_type = 0;
+  // Autocomplete
+  s->ac.open = false;
+  s->ac.count = 0;
+  s->ac.sel = 0;
+  s->ac.scroll = 0;
 }
 
 void draw_dialog(i32 cx, i32 cy, i32 cw, i32 ch,
@@ -1004,6 +1371,56 @@ void csharp_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
     else if (!at_end) col++;
   }
 
+  // ── Autocomplete popup ──
+  if (s->ac.open && s->ac.count > 0 && !s->saveas_open && !s->addfile_open) {
+    i32 cur_line = count_lines(s->src, s->cursor);
+    i32 cur_col_val = cursor_col(s->src, s->cursor);
+    i32 popup_x = text_x + cur_col_val * fw;
+    i32 popup_y = area_y + (cur_line - s->scroll_y + 1) * LH;
+    i32 vis = s->ac.count < AC_VIS ? s->ac.count : AC_VIS;
+    i32 item_h = fh + 4;
+    i32 popup_h = vis * item_h + 4;
+    i32 popup_w = 0;
+    for (i32 i = 0; i < s->ac.count; i++) {
+      i32 w2 = gfx::text_width(s->ac.items[i].label) + 16;
+      if (w2 > popup_w) popup_w = w2;
+    }
+    if (popup_w < 120) popup_w = 120;
+    // Clamp to editor bounds
+    if (popup_x + popup_w > ex + ew) popup_x = ex + ew - popup_w;
+    if (popup_x < ex) popup_x = ex;
+    // If popup goes below editor, show above cursor
+    if (popup_y + popup_h > split_y)
+      popup_y = area_y + (cur_line - s->scroll_y) * LH - popup_h;
+    if (popup_y < area_y) popup_y = area_y;
+
+    // Shadow + background
+    gfx::fill_rect(popup_x + 2, popup_y + 2, popup_w, popup_h, 0x00111122);
+    gfx::fill_rect(popup_x, popup_y, popup_w, popup_h, COL_AC_BG);
+    gfx::rect(popup_x, popup_y, popup_w, popup_h, COL_AC_BORDER);
+
+    // Items
+    for (i32 i = 0; i < vis; i++) {
+      i32 idx = s->ac.scroll + i;
+      if (idx >= s->ac.count) break;
+      i32 iy = popup_y + 2 + i * item_h;
+      bool sel2 = (idx == s->ac.sel);
+      if (sel2)
+        gfx::fill_rect(popup_x + 1, iy, popup_w - 2, item_h, COL_AC_SEL);
+      u32 tc = sel2 ? 0x00FFFFFF : COL_AC_TEXT;
+      gfx::draw_text(popup_x + 8, iy + 2, s->ac.items[idx].label, tc,
+                      sel2 ? COL_AC_SEL : COL_AC_BG);
+    }
+
+    // Scrollbar hint if more items
+    if (s->ac.count > AC_VIS) {
+      i32 sb_h = popup_h * vis / s->ac.count;
+      if (sb_h < 6) sb_h = 6;
+      i32 sb_y = popup_y + (popup_h - 4) * s->ac.scroll / (s->ac.count - AC_VIS + 1);
+      gfx::fill_rect(popup_x + popup_w - 4, sb_y, 3, sb_h, COL_AC_BORDER);
+    }
+  }
+
   // ── Dialogs (drawn on top) ──
   if (s->saveas_open) {
     draw_dialog(cx, cy, cw, ch, "Save As", "Path:",
@@ -1118,8 +1535,22 @@ bool csharp_key(u8 *state, char key) {
     return true;
   }
 
+  // ── Autocomplete intercept ──
+  if (s->ac.open) {
+    // Tab: accept completion
+    if (key == '\t') { ac_accept(s); return true; }
+    // Escape: close popup (and don't clear selection)
+    if (key == 0x1B) { s->ac.open = false; return true; }
+    // Enter: accept if popup open
+    if (key == '\r' || key == '\n') { ac_accept(s); return true; }
+  } else {
+    // Tab without popup: trigger general completion
+    if (key == '\t') { ac_trigger_general(s); return true; }
+  }
+
   // Ctrl+E: Toggle solution explorer
   if (key == 0x05) {
+    s->ac.open = false;
     if (s->sln.active)
       s->sln_panel_open = !s->sln_panel_open;
     return true;
@@ -1127,6 +1558,7 @@ bool csharp_key(u8 *state, char key) {
 
   // Ctrl+N: Add new file to solution
   if (key == 0x0E) {
+    s->ac.open = false;
     if (s->sln.active && s->sln.file_count < SLN_MAX_FILES) {
       s->addfile_open = true;
       str::cpy(s->addfile_buf, "NewFile.cs");
@@ -1137,6 +1569,7 @@ bool csharp_key(u8 *state, char key) {
 
   // F5 / Ctrl+R = Run (auto-detects console vs GUI mode)
   if (key == 0x12) {
+    s->ac.open = false;
     // Save current file first
     if (s->sln.active) flush_current_file(s);
     else if (s->filepath[0]) save_file(s);
@@ -1267,6 +1700,7 @@ bool csharp_key(u8 *state, char key) {
 
   // Ctrl+S
   if (key == 0x13) {
+    s->ac.open = false;
     if (s->sln.active) {
       flush_current_file(s);
       save_sln_file(s);
@@ -1282,6 +1716,7 @@ bool csharp_key(u8 *state, char key) {
 
   // Ctrl+W: Save As
   if (key == 0x17) {
+    s->ac.open = false;
     s->saveas_open = true;
     if (s->filepath[0]) str::ncpy(s->saveas_buf, s->filepath, 63);
     else str::cpy(s->saveas_buf, "/home/Desktop/program.cs");
@@ -1290,10 +1725,10 @@ bool csharp_key(u8 *state, char key) {
   }
 
   // Ctrl+A
-  if (key == 0x01) { s->sel_start = 0; s->cursor = s->src_len; return true; }
+  if (key == 0x01) { s->ac.open = false; s->sel_start = 0; s->cursor = s->src_len; return true; }
 
   // Escape
-  if (key == 0x1B) { s->sel_start = -1; return true; }
+  if (key == 0x1B) { s->ac.open = false; s->sel_start = -1; return true; }
 
   // Delete
   if (key == 0x04) {
@@ -1303,16 +1738,18 @@ bool csharp_key(u8 *state, char key) {
       for (i32 i = s->cursor; i < s->src_len - 1; i++) s->src[i] = s->src[i + 1];
       s->src_len--; s->src[s->src_len] = '\0'; s->dirty = true;
     }
+    s->ac.open = false;
     return true;
   }
 
   // Backspace
   if (key == 0x7F || key == 0x08) {
     i32 lo, hi;
-    if (sel_range(s, lo, hi)) { delete_range(s, lo, hi); }
+    if (sel_range(s, lo, hi)) { delete_range(s, lo, hi); s->ac.open = false; }
     else if (s->cursor > 0) {
       for (i32 i = s->cursor - 1; i < s->src_len - 1; i++) s->src[i] = s->src[i + 1];
       s->src_len--; s->cursor--; s->src[s->src_len] = '\0'; s->dirty = true;
+      if (s->ac.open) ac_update(s);
     }
     return true;
   }
@@ -1329,6 +1766,19 @@ bool csharp_key(u8 *state, char key) {
       s->src[s->src_len] = '\0'; s->dirty = true;
     }
     s->sel_start = -1;
+
+    // Autocomplete triggers
+    if (key == '.') {
+      ac_trigger_dot(s);
+    } else if (key == '\n' || key == ' ' || key == '(' || key == ')' ||
+               key == '{' || key == '}' || key == ';') {
+      s->ac.open = false;
+    } else if (is_ident_ch(key)) {
+      if (s->ac.open) ac_update(s);
+      else ac_trigger_general(s);
+    } else {
+      s->ac.open = false;
+    }
     return true;
   }
 
@@ -1343,6 +1793,22 @@ void csharp_arrow(u8 *state, char dir) {
     if (dir == 'C' && s->template_sel < TPL_COUNT - 1) s->template_sel++;
     else if (dir == 'D' && s->template_sel > 0) s->template_sel--;
     return;
+  }
+
+  // Autocomplete: Up/Down navigate popup
+  if (s->ac.open) {
+    if (dir == 'A') { // Up
+      if (s->ac.sel > 0) s->ac.sel--;
+      if (s->ac.sel < s->ac.scroll) s->ac.scroll = s->ac.sel;
+      return;
+    }
+    if (dir == 'B') { // Down
+      if (s->ac.sel < s->ac.count - 1) s->ac.sel++;
+      if (s->ac.sel >= s->ac.scroll + AC_VIS) s->ac.scroll = s->ac.sel - AC_VIS + 1;
+      return;
+    }
+    // Left/Right dismiss popup
+    s->ac.open = false;
   }
 
   s->sel_start = -1;
@@ -1423,6 +1889,39 @@ void csharp_click(u8 *state, i32 rx, i32 ry, i32 cw, i32 ch) {
   }
 
   if (s->saveas_open || s->addfile_open) return;
+
+  // Autocomplete popup click
+  if (s->ac.open && s->ac.count > 0) {
+    i32 fw2 = gfx::font_w(), fh2 = gfx::font_h(), LH2 = fh2 + 2, LNW2 = fw2 * 4;
+    i32 panel_w2 = (s->sln_panel_open && s->sln.active) ? SLN_PANEL_W : 0;
+    i32 ex2 = panel_w2;
+    i32 text_x2 = ex2 + LNW2 + 4;
+    i32 area_y2 = TOOLBAR_H;
+    i32 cur_line2 = count_lines(s->src, s->cursor);
+    i32 cur_col2 = cursor_col(s->src, s->cursor);
+    i32 item_h2 = fh2 + 4;
+    i32 vis2 = s->ac.count < AC_VIS ? s->ac.count : AC_VIS;
+    i32 popup_w2 = 120;
+    for (i32 i = 0; i < s->ac.count; i++) {
+      i32 w3 = gfx::text_width(s->ac.items[i].label) + 16;
+      if (w3 > popup_w2) popup_w2 = w3;
+    }
+    i32 popup_x2 = text_x2 + cur_col2 * fw2;
+    i32 popup_y2 = area_y2 + (cur_line2 - s->scroll_y + 1) * LH2;
+    i32 popup_h2 = vis2 * item_h2 + 4;
+    // Check if click is inside popup
+    if (rx >= popup_x2 && rx < popup_x2 + popup_w2 &&
+        ry >= popup_y2 && ry < popup_y2 + popup_h2) {
+      i32 idx = s->ac.scroll + (ry - popup_y2 - 2) / item_h2;
+      if (idx >= 0 && idx < s->ac.count) {
+        s->ac.sel = idx;
+        ac_accept(s);
+      }
+      return;
+    }
+    // Click outside popup dismisses it
+    s->ac.open = false;
+  }
 
   i32 panel_w = (s->sln_panel_open && s->sln.active) ? SLN_PANEL_W : 0;
 

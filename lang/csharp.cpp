@@ -66,6 +66,8 @@ struct Var {
 };
 
 // ── Functions ───────────────────────────────────────────────────────────────
+enum Access : u8 { ACC_PUBLIC = 0, ACC_PRIVATE = 1, ACC_PROTECTED = 2 };
+
 struct Func {
   char name[32];
   i32 tok_start;    // token index of first '{' of body
@@ -73,6 +75,8 @@ struct Func {
   char params[6][32];
   VType param_types[6];
   VType ret_type;
+  Access access;
+  char owner_class[32]; // class this method belongs to
 };
 
 // ── Interpreter state (file-static, reset each run) ─────────────────────────
@@ -921,6 +925,19 @@ Value parse_primary() {
         // Look up method as a declared function
         Func *fn = find_func(method);
         if (fn && at(T_LPAREN)) {
+          // Enforce access modifiers for external calls
+          if (fn->access != ACC_PUBLIC) {
+            char errbuf[80];
+            str::cpy(errbuf, "'");
+            str::cat(errbuf, method);
+            str::cat(errbuf, "' is ");
+            str::cat(errbuf, fn->access == ACC_PRIVATE ? "private" : "protected");
+            str::cat(errbuf, " in '");
+            str::cat(errbuf, fn->owner_class);
+            str::cat(errbuf, "'");
+            error(errbuf);
+            return make_void();
+          }
           expect(T_LPAREN);
           // Parse arguments (pass them as params if the function accepts them)
           Value args[6];
@@ -1504,13 +1521,21 @@ void scan_functions() {
 
     // class Name {
     if (match(T_CLASS)) {
+      char cur_class[32];
+      tok_text(cur(), cur_class, 32);
       tp++; // skip class name
       expect(T_LBRACE);
 
       // Methods inside class
       while (!at(T_RBRACE) && !at(T_EOF) && !had_error) {
-        // Skip modifiers (public, private, etc.) and 'static'
-        skip_modifiers();
+        // Capture access modifier before skipping
+        Access mem_access = ACC_PRIVATE; // C# default is private
+        while (is_modifier(cur().type)) {
+          if (cur().type == T_PUBLIC) mem_access = ACC_PUBLIC;
+          else if (cur().type == T_PRIVATE) mem_access = ACC_PRIVATE;
+          else if (cur().type == T_PROTECTED) mem_access = ACC_PROTECTED;
+          tp++;
+        }
         match(T_STATIC);
 
         if (at(T_RBRACE) || at(T_EOF)) break;
@@ -1593,6 +1618,8 @@ void scan_functions() {
           expect(T_RPAREN);
 
           fn.tok_start = tp;
+          fn.access = mem_access;
+          str::ncpy(fn.owner_class, cur_class, 31);
           func_count++;
           skip_block();
         } else if (is_field) {
