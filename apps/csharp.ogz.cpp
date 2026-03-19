@@ -356,8 +356,16 @@ void add_file_to_sln(CSharpState *s, const char *filename) {
     fs::write(filename, "using System;\n\nclass NewApp {\n    static void Main() {\n    }\n\n"
               "    static void OnDraw(int w, int h) {\n        Gfx.Clear(0xF0F0F0);\n    }\n}\n");
   } else {
-    fs::write(filename, "using System;\n\nclass NewClass {\n    static void Main() {\n"
-              "        Console.WriteLine(\"Hello!\");\n    }\n}\n");
+    // Extract class name from filename (strip .cs extension)
+    char cname[64];
+    str::ncpy(cname, filename, 63);
+    usize cl = str::len(cname);
+    if (cl > 3 && str::cmp(cname + cl - 3, ".cs") == 0) cname[cl - 3] = '\0';
+    char tmpl[256];
+    str::cpy(tmpl, "using System;\n\nclass ");
+    str::cat(tmpl, cname);
+    str::cat(tmpl, " {\n    public void Run() {\n    }\n}\n");
+    fs::write(filename, tmpl);
   }
   fs::sync_to_disk();
   fs::cd(old);
@@ -1227,13 +1235,24 @@ bool csharp_key(u8 *state, char key) {
         } else {
           str::cpy(gui_path, "/tmp/app.csg");
         }
-        // Save merged source to the .csg file so csgui host sees everything
-        char gdir[128], gname[64];
-        split_path(gui_path, gdir, sizeof(gdir), gname, sizeof(gname));
-        char old2[256]; fs::get_cwd(old2, sizeof(old2));
-        fs::cd(gdir); fs::touch(gname); fs::write(gname, run_src);
-        fs::sync_to_disk(); fs::cd(old2);
-        gui::open_file(gui_path, run_src);
+        // Save source so csgui host can read it.
+        // For solutions, write merged source to a temp file so we don't
+        // corrupt the original .csg entry file with baked-in library code.
+        const char *launch_path = gui_path;
+        if (s->sln.active) {
+          fs::cd("/tmp");
+          fs::touch("_sln_run.csg");
+          fs::write("_sln_run.csg", run_src);
+          fs::sync_to_disk();
+          launch_path = "/tmp/_sln_run.csg";
+        } else {
+          char gdir[128], gname[64];
+          split_path(gui_path, gdir, sizeof(gdir), gname, sizeof(gname));
+          char old2[256]; fs::get_cwd(old2, sizeof(old2));
+          fs::cd(gdir); fs::touch(gname); fs::write(gname, run_src);
+          fs::sync_to_disk(); fs::cd(old2);
+        }
+        gui::open_file(launch_path, run_src);
         s->ran_ok = true;
         str::cpy(s->output, "Build succeeded. GUI app launched.\n");
       }
