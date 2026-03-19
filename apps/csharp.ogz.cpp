@@ -542,6 +542,7 @@ i32 word_before(const char *src, i32 pos, char *out, i32 max) {
 
 struct MethodTable { const char *type; const char *methods[12]; };
 const MethodTable METHOD_TABLES[] = {
+  {"int", {"Parse",nullptr}},
   {"Console", {"WriteLine","Write",nullptr}},
   {"Gfx", {"Clear","FillRect","Rect","DrawText","Pixel","Line","HLine",nullptr}},
   {"App", {"Close","Width","Height",nullptr}},
@@ -551,7 +552,7 @@ const MethodTable METHOD_TABLES[] = {
   {"CheckBox", {"Draw","SetText","GetText","Toggle","IsChecked","HitTest","SetPos","SetColor",nullptr}},
   {"Panel", {"Draw","SetText","SetColor","SetPos","SetSize",nullptr}},
 };
-constexpr i32 MT_COUNT = 8;
+constexpr i32 MT_COUNT = 9;
 
 bool find_var_type(const char *src, i32 len, const char *name, char *out, i32 max) {
   i32 nlen = static_cast<i32>(str::len(name));
@@ -822,7 +823,7 @@ void ac_trigger_dot(CSharpState *s) {
   if (wl == 0) return;
   const char *type = nullptr;
   // Check built-in static classes
-  const char *statics[] = {"Console","Gfx","App",nullptr};
+  const char *statics[] = {"Console","Gfx","App","int",nullptr};
   for (i32 i = 0; statics[i]; i++) {
     if (str::cmp(word, statics[i]) == 0) { type = statics[i]; break; }
   }

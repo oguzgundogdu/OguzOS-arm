@@ -12,7 +12,7 @@
 namespace fs {
 
 constexpr usize MAX_NAME = 64;
-constexpr usize MAX_CONTENT = 4096;
+constexpr usize MAX_CONTENT = 8192;
 constexpr usize MAX_CHILDREN = 32;
 constexpr usize MAX_NODES = 128;
 

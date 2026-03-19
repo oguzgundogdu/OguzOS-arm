@@ -1244,6 +1244,24 @@ void handle_menu_click(i32 item) {
     return;
   }
 
+  // C# .ogz app launch (not a native app, but stored in /bin/)
+  if (menu_entry_types[item] == menu::ENTRY_APP) {
+    const menu::Entry *e = menu::get(item);
+    if (e && e->id[0]) {
+      char old_cwd[256]; fs::get_cwd(old_cwd, sizeof(old_cwd));
+      fs::cd("/bin");
+      const char *content = fs::cat(e->id);
+      fs::cd(old_cwd);
+      if (content && content[0] != '#') { // Not a native app descriptor
+        char fpath[160];
+        str::cpy(fpath, "/bin/");
+        str::cat(fpath, e->id);
+        gui::open_file(fpath, content);
+        return;
+      }
+    }
+  }
+
   // Command: open terminal and run the command
   if (menu_entry_types[item] == menu::ENTRY_COMMAND) {
     const menu::Entry *e = menu::get(item);
@@ -1933,10 +1951,30 @@ void open_file(const char *path, const char *content) {
 
   // Check for .ogz app binary
   usize nlen = str::len(name);
-  if (nlen > 4 && str::cmp(name + nlen - 4, ".ogz") == 0 &&
-      apps::find(name)) {
-    open_app(name);
-    return;
+  if (nlen > 4 && str::cmp(name + nlen - 4, ".ogz") == 0) {
+    if (apps::find(name)) {
+      open_app(name);
+      return;
+    }
+    // Not a native app — try running as a C# executable via csgui host
+    const OgzApp *host = apps::find("csgui.ogz");
+    if (host && host->on_open_file) {
+      i32 idx = create_window(name, 80, 30, host->default_w, host->default_h,
+                               WIN_APP);
+      if (idx >= 0) {
+        windows[idx].app = const_cast<OgzApp *>(host);
+        str::memset(windows[idx].app_state, 0, sizeof(windows[idx].app_state));
+        if (try_enter() == 0) {
+          host->on_open(windows[idx].app_state);
+          host->on_open_file(windows[idx].app_state, path, content);
+          try_leave();
+          syslog::info("gui", "launched C# app '%s' via csgui", name);
+        } else {
+          close_window(idx);
+        }
+      }
+      return;
+    }
   }
 
   // Check file association

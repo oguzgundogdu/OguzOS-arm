@@ -7,7 +7,7 @@
 namespace {
 
 // ── Limits ──────────────────────────────────────────────────────────────────
-constexpr i32 MAX_TOKENS = 1024;
+constexpr i32 MAX_TOKENS = 2048;
 constexpr i32 MAX_VARS = 64;
 constexpr i32 MAX_FUNCS = 16;
 constexpr i32 MAX_CALL = 16;
@@ -528,7 +528,23 @@ bool at(u8 type) { return cur().type == type; }
 bool match(u8 type) { if (at(type)) { tp++; return true; } return false; }
 void expect(u8 type) {
   if (!match(type)) {
-    error("unexpected token");
+    char ebuf[80];
+    str::cpy(ebuf, "expected tok ");
+    char tmp[4]; tmp[0] = '0' + (type / 10); tmp[1] = '0' + (type % 10); tmp[2] = '\0';
+    str::cat(ebuf, tmp);
+    str::cat(ebuf, " got ");
+    u8 gt = cur().type;
+    tmp[0] = '0' + (gt / 10); tmp[1] = '0' + (gt % 10); tmp[2] = '\0';
+    str::cat(ebuf, tmp);
+    str::cat(ebuf, " at ");
+    i32 pos = cur().pos;
+    char pb[8]; pb[0] = '\0';
+    i32 pi = 0; char pt[8];
+    if (pos == 0) { pb[0] = '0'; pb[1] = '\0'; }
+    else { while (pos > 0) { pt[pi++] = '0' + (pos % 10); pos /= 10; }
+           i32 pj = 0; while (pi > 0) pb[pj++] = pt[--pi]; pb[pj] = '\0'; }
+    str::cat(ebuf, pb);
+    error(ebuf);
   }
 }
 
@@ -699,6 +715,26 @@ Value parse_primary() {
 
     expect(T_RPAREN);
     return make_widget(idx);
+  }
+
+  // int.Parse(string) → convert string to int
+  if (at(T_INT) && tp + 1 < tok_count && tokens[tp + 1].type == T_DOT) {
+    tp++; // skip 'int'
+    tp++; // skip '.'
+    char method[32]; tok_text(cur(), method, 32); tp++;
+    if (str::cmp(method, "Parse") == 0) {
+      expect(T_LPAREN);
+      Value arg = parse_expr();
+      expect(T_RPAREN);
+      if (arg.type != V_STRING) { error("int.Parse expects string"); return make_int(0); }
+      // Parse string to integer
+      const char *s = arg.sval;
+      i32 result = 0, sign = 1, i = 0;
+      if (s[0] == '-') { sign = -1; i = 1; }
+      while (s[i] >= '0' && s[i] <= '9') { result = result * 10 + (s[i] - '0'); i++; }
+      return make_int(result * sign);
+    }
+    error("unknown int method"); return make_int(0);
   }
 
   if (at(T_IDENT)) {
