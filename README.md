@@ -14,6 +14,7 @@ A minimal operating system written in freestanding C++17 for ARM64 (AArch64), fe
 - **No standard library** — everything from scratch
 
 ## Screenshot
+<img width="1283" height="724" alt="image" src="https://github.com/user-attachments/assets/372e6887-b108-4a16-b517-6b2dc67c030c" />
 
 > Boot the graphical desktop with `make gui`, or use text-only mode with `make run`.
 
