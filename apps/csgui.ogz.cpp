@@ -65,8 +65,17 @@ void csgui_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
 
 bool csgui_key(u8 *state, char key) {
   auto *s = reinterpret_cast<CsGuiState *>(state);
-  if (!s->initialized) return false;
-  return csharp::call_key(key);
+  if (!s->initialized || s->error) return false;
+  bool consumed = csharp::call_key(key);
+  if (csharp::has_error()) {
+    s->error = true;
+    const char *emsg = csharp::get_error();
+    if (emsg && emsg[0])
+      str::ncpy(s->error_msg, emsg, 127);
+    else
+      str::cpy(s->error_msg, "Runtime error");
+  }
+  return consumed;
 }
 
 void csgui_arrow(u8 *state, char dir) {

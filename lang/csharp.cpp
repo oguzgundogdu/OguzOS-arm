@@ -7,7 +7,7 @@
 namespace {
 
 // ── Limits ──────────────────────────────────────────────────────────────────
-constexpr i32 MAX_TOKENS = 2048;
+constexpr i32 MAX_TOKENS = 4096;
 constexpr i32 MAX_VARS = 64;
 constexpr i32 MAX_FUNCS = 16;
 constexpr i32 MAX_CALL = 16;
@@ -1263,7 +1263,17 @@ void exec_block() {
   while (!at(T_RBRACE) && !at(T_EOF) && !had_error && !had_return) {
     exec_stmt();
   }
-  expect(T_RBRACE);
+  if (had_return && !at(T_RBRACE) && !had_error) {
+    // Early return: skip remaining statements to find the closing brace
+    i32 depth = 1;
+    while (depth > 0 && !at(T_EOF)) {
+      if (match(T_LBRACE)) depth++;
+      else if (match(T_RBRACE)) depth--;
+      else tp++;
+    }
+  } else {
+    expect(T_RBRACE);
+  }
   pop_scope();
 }
 
