@@ -1,4 +1,9 @@
 #include "app.h"
+#include "registry.h"
+
+#ifdef USERSPACE
+#include "userapi.h"
+#else
 #include "assoc.h"
 #include "commands.h"
 #include "disk.h"
@@ -10,10 +15,10 @@
 #include "menu.h"
 #include "net.h"
 #include "netdev.h"
-#include "registry.h"
 #include "string.h"
 #include "syslog.h"
 #include "uart.h"
+#endif
 
 /*
  * terminal.ogz — OguzOS Terminal

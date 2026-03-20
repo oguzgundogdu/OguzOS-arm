@@ -72,6 +72,10 @@ LDFLAGS = -T $(ARCH_DIR)/linker.ld -nostdlib
 # Object files (listed explicitly to avoid basename collisions)
 OBJS = $(BUILD_DIR)/boot.o \
        $(BUILD_DIR)/exception.o \
+       $(BUILD_DIR)/mmu.o \
+       $(BUILD_DIR)/el0.o \
+       $(BUILD_DIR)/syscall.o \
+       $(BUILD_DIR)/userstacks.o \
        $(BUILD_DIR)/uart.o \
        $(BUILD_DIR)/disk.o \
        $(BUILD_DIR)/netdev.o \
@@ -131,6 +135,21 @@ $(BUILD_DIR)/boot.o: $(ARCH_DIR)/boot.S | $(BUILD_DIR)
 $(BUILD_DIR)/exception.o: $(ARCH_DIR)/exception.S | $(BUILD_DIR)
 	$(AS) $(ASFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/mmu.o: $(ARCH_DIR)/mmu.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/el0.o: $(ARCH_DIR)/el0.S | $(BUILD_DIR)
+	$(AS) $(ASFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/syscall.o: $(ARCH_DIR)/syscall.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/userstacks.o: $(ARCH_DIR)/userstacks.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# User-space app flags
+USERFLAGS = $(CXXFLAGS) -DUSERSPACE
+
 # C++ rules
 $(BUILD_DIR)/uart.o: $(DRIVERS_DIR)/uart.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
@@ -172,19 +191,19 @@ $(BUILD_DIR)/registry.o: $(APPS_DIR)/registry.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/notepad.o: $(APPS_DIR)/notepad.ogz.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+	$(CXX) $(USERFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/terminal.o: $(APPS_DIR)/terminal.ogz.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+	$(CXX) $(USERFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/taskman.o: $(APPS_DIR)/taskman.ogz.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+	$(CXX) $(USERFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/settingsapp.o: $(APPS_DIR)/settings.ogz.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+	$(CXX) $(USERFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/browser.o: $(APPS_DIR)/browser.ogz.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+	$(CXX) $(USERFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/settings.o: $(LIB_DIR)/settings.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
@@ -208,10 +227,10 @@ $(BUILD_DIR)/csharp_interp.o: $(LANG_DIR)/csharp.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/csharp_ide.o: $(APPS_DIR)/csharp.ogz.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+	$(CXX) $(USERFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/csgui.o: $(APPS_DIR)/csgui.ogz.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+	$(CXX) $(USERFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/kernel.o: $(KERNEL_DIR)/kernel.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
@@ -230,7 +249,7 @@ $(DISK_IMG):
 # Run with QEMU — text-only mode (no GUI)
 run: $(KERNEL_BIN) $(DISK_IMG)
 	qemu-system-aarch64 \
-		-machine virt \
+		-machine virt,virtualization=on \
 		-cpu cortex-a72 \
 		-m 1G \
 		-nographic \
@@ -250,7 +269,7 @@ gui: $(KERNEL_BIN) $(DISK_IMG)
 	@echo "  Resolution: $(RES_W)x$(RES_H)  Keyboard: $(KBD) (index $(KBD_INDEX))"
 	@echo "  Note: Set macOS keyboard to 'US' or 'ABC' for all keys to work in QEMU"
 	qemu-system-aarch64 \
-		-machine virt \
+		-machine virt,virtualization=on \
 		-cpu cortex-a72 \
 		-m 1G \
 		-serial stdio \

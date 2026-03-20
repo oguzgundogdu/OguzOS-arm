@@ -1,14 +1,19 @@
 #include "app.h"
+#include "registry.h"
+
+#ifdef USERSPACE
+#include "userapi.h"
+#else
 #include "assoc.h"
 #include "fb.h"
 #include "graphics.h"
 #include "keyboard.h"
 #include "menu.h"
 #include "mouse.h"
-#include "registry.h"
 #include "settings.h"
 #include "string.h"
 #include "syslog.h"
+#endif
 
 /*
  * settings.ogz — OguzOS Settings

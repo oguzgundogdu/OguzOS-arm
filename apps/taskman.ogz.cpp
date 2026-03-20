@@ -1,4 +1,9 @@
 #include "app.h"
+#include "registry.h"
+
+#ifdef USERSPACE
+#include "userapi.h"
+#else
 #include "disk.h"
 #include "fb.h"
 #include "fs.h"
@@ -8,9 +13,9 @@
 #include "mouse.h"
 #include "net.h"
 #include "netdev.h"
-#include "registry.h"
 #include "string.h"
 #include "syslog.h"
+#endif
 
 /*
  * taskman.ogz — OguzOS Task Manager

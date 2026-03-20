@@ -7,6 +7,7 @@
 #include "gui.h"
 #include "keyboard.h"
 #include "mouse.h"
+#include "mmu.h"
 #include "net.h"
 #include "netdev.h"
 #include "registry.h"
@@ -80,6 +81,20 @@ void print_banner() {
 extern "C" void kernel_main() {
   // Initialize UART first (for any debug output)
   uart::init();
+
+  // Enable MMU with identity mapping (VA = PA).
+  // All RAM starts as AP=00 (EL1 only) so kernel code can execute.
+  mmu::init();
+
+  // Grant EL0 access to all RAM except the first 2 MB block (L2[0])
+  // which contains kernel .text and must stay AP=00 so EL1 can
+  // execute from it (AP=01 forces PXN=1 per ARM spec).
+  {
+    u64 user_start = 0x40200000ULL;  /* L2[1] onward */
+    u64 user_size  = 0x3FE00000ULL;  /* rest of the 1 GB region */
+    mmu::set_user_accessible(user_start, user_size, true);
+    mmu::flush_tlb();
+  }
 
   syslog::info("kernel", "OguzOS booting...");
 

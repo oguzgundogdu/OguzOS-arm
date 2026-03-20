@@ -23,54 +23,63 @@ inline u32 blend(u32 fg, u32 bg, u8 alpha) {
 
 } // anonymous namespace
 
-namespace {
-
-// Back buffer in BSS — 1920*1080*4 = 8,294,400 bytes (~8 MB)
+// Back buffer + screen info in user-accessible section for EL0 drawing
 constexpr u32 MAX_W = 1920;
 constexpr u32 MAX_H = 1080;
-u32 backbuf[MAX_W * MAX_H];
 
-u32 screen_w = 0;
-u32 screen_h = 0;
+__attribute__((section(".userbuf")))
+u32 gfx_backbuf[MAX_W * MAX_H];            // ~8 MB
 
+__attribute__((section(".userbuf")))
+u32 gfx_screen_w;
+
+__attribute__((section(".userbuf")))
+u32 gfx_screen_h;
+
+// Syscall transfer buffer — user-accessible scratch space
+__attribute__((section(".userbuf")))
+char gfx_transfer_buf[8192];
+
+namespace {
+u32 *backbuf = gfx_backbuf;    // local alias
 } // anonymous namespace
 
 namespace gfx {
 
 void init() {
-  screen_w = fb::width();
-  screen_h = fb::height();
-  str::memset(backbuf, 0, sizeof(backbuf));
+  gfx_screen_w = fb::width();
+  gfx_screen_h = fb::height();
+  str::memset(backbuf, 0, MAX_W * MAX_H * sizeof(u32));
 }
 
 void reinit() {
-  screen_w = fb::width();
-  screen_h = fb::height();
+  gfx_screen_w = fb::width();
+  gfx_screen_h = fb::height();
 }
 
 void swap() {
   u32 *front = fb::buffer();
-  u32 total = screen_w * screen_h;
+  u32 total = gfx_screen_w * gfx_screen_h;
   // Single memcpy from back buffer to framebuffer
   str::memcpy(front, backbuf, total * sizeof(u32));
 }
 
 void clear(u32 color) {
-  u32 total = screen_w * screen_h;
+  u32 total = gfx_screen_w * gfx_screen_h;
   for (u32 i = 0; i < total; i++)
     backbuf[i] = color;
 }
 
 void pixel(i32 x, i32 y, u32 color) {
-  if (x < 0 || y < 0 || x >= static_cast<i32>(screen_w) ||
-      y >= static_cast<i32>(screen_h))
+  if (x < 0 || y < 0 || x >= static_cast<i32>(gfx_screen_w) ||
+      y >= static_cast<i32>(gfx_screen_h))
     return;
-  backbuf[y * screen_w + x] = color;
+  backbuf[y * gfx_screen_w + x] = color;
 }
 
 void fill_rect(i32 x, i32 y, i32 w, i32 h, u32 color) {
-  i32 sw = static_cast<i32>(screen_w);
-  i32 sh = static_cast<i32>(screen_h);
+  i32 sw = static_cast<i32>(gfx_screen_w);
+  i32 sh = static_cast<i32>(gfx_screen_h);
 
   if (x < 0) { w += x; x = 0; }
   if (y < 0) { h += y; y = 0; }
@@ -101,8 +110,8 @@ void draw_char(i32 x, i32 y, char c, u32 fg, u32 bg) {
     c = '?';
   const u8 *glyph = font_alpha[c - 32];
 
-  i32 sw = static_cast<i32>(screen_w);
-  i32 sh = static_cast<i32>(screen_h);
+  i32 sw = static_cast<i32>(gfx_screen_w);
+  i32 sh = static_cast<i32>(gfx_screen_h);
 
   for (i32 row = 0; row < FONT_H; row++) {
     i32 py = y + row;
@@ -127,8 +136,8 @@ void draw_text(i32 x, i32 y, const char *text, u32 fg, u32 bg) {
 }
 
 void draw_text_nobg(i32 x, i32 y, const char *text, u32 fg) {
-  i32 sw = static_cast<i32>(screen_w);
-  i32 sh = static_cast<i32>(screen_h);
+  i32 sw = static_cast<i32>(gfx_screen_w);
+  i32 sh = static_cast<i32>(gfx_screen_h);
 
   while (*text) {
     char c = *text;

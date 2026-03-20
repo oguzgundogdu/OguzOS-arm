@@ -2,7 +2,7 @@
 #include "app.h"
 #include "assoc.h"
 #include "menu.h"
-#include "exception.h"
+#include "el0.h"
 #include "fb.h"
 #include "fs.h"
 #include "graphics.h"
@@ -15,6 +15,39 @@
 #include "syslog.h"
 #include "types.h"
 #include "uart.h"
+
+/* User stack top (defined in userstacks.cpp) */
+extern "C" u64 user_stack_top(i32 idx);
+
+namespace {
+
+/* EL0 isolation model:
+ *
+ * Kernel code (L2[0]):  AP=00 (EL1 RW only) — executable from EL1.
+ * User regions (L2[2+]): AP=01 (EL1 RW, EL0 RW) — set in kernel_main.
+ * MMIO (L1[0]):          AP=00 (EL1 only) — EL0 cannot access devices.
+ *
+ * Note: AP=01 forces PXN=1 per ARM spec — EL1 cannot fetch instructions
+ * from EL0-writable memory.  Kernel .text must stay in AP=00 blocks.
+ *
+ * Apps at EL0 can read/write user regions but cannot:
+ *   - Access MMIO devices (UART, virtio, framebuffer HW)
+ *   - Execute privileged instructions (MSR, ERET, etc.)
+ *   - Modify page tables or exception vectors
+ *
+ * All kernel services are accessed via SVC.
+ */
+
+/* Call an app callback at EL0.
+ * Returns true on success, false on fault. */
+bool el0_app_call(void *func, u64 a0, u64 a1 = 0, u64 a2 = 0,
+                   u64 a3 = 0, u64 a4 = 0, i32 win_idx = 0) {
+    i32 result = el0_call(func, a0, a1, a2, a3, a4,
+                          user_stack_top(win_idx));
+    return result == 0;
+}
+
+} // anonymous namespace
 
 namespace {
 
@@ -1208,12 +1241,11 @@ void render() {
     case WIN_APP:
       draw_window_frame(windows[i]);
       if (windows[i].app && windows[i].app->on_draw) {
-        if (try_enter() == 0) {
-          windows[i].app->on_draw(
-              windows[i].app_state, windows[i].x,
-              windows[i].y + TITLEBAR_H, windows[i].w,
-              windows[i].h - TITLEBAR_H);
-          try_leave();
+        if (el0_app_call((void *)windows[i].app->on_draw,
+              (u64)windows[i].app_state, (u64)windows[i].x,
+              (u64)(windows[i].y + TITLEBAR_H), (u64)windows[i].w,
+              (u64)(windows[i].h - TITLEBAR_H), i)) {
+          /* success */
         } else {
           close_window(i);
           i--;
@@ -1273,10 +1305,12 @@ void handle_menu_click(i32 item) {
         if (idx >= 0) {
           windows[idx].app = const_cast<OgzApp *>(term);
           str::memset(windows[idx].app_state, 0, sizeof(windows[idx].app_state));
-          if (try_enter() == 0) {
-            term->on_open(windows[idx].app_state);
-            term->on_open_file(windows[idx].app_state, e->label, e->id);
-            try_leave();
+          if (el0_app_call((void *)term->on_open,
+                (u64)windows[idx].app_state, 0, 0, 0, 0, idx) &&
+              el0_app_call((void *)term->on_open_file,
+                (u64)windows[idx].app_state, (u64)e->label,
+                (u64)e->id, 0, 0, idx)) {
+            /* success */
           } else {
             close_window(idx);
           }
@@ -1696,9 +1730,10 @@ void handle_mouse_down(i32 x, i32 y) {
       } else if (w.type == WIN_APP && w.app && w.app->on_mouse_down) {
         i32 rx = x - w.x;
         i32 ry = y - (w.y + TITLEBAR_H);
-        if (try_enter() == 0) {
-          w.app->on_mouse_down(w.app_state, rx, ry, w.w, w.h - TITLEBAR_H);
-          try_leave();
+        if (el0_app_call((void *)w.app->on_mouse_down,
+              (u64)w.app_state, (u64)rx, (u64)ry, (u64)w.w,
+              (u64)(w.h - TITLEBAR_H), window_count - 1)) {
+          /* success */
         }
       }
       return;
@@ -1860,9 +1895,10 @@ void handle_mouse_up(i32 x, i32 y) {
           i32 ry = y - (win.y + TITLEBAR_H);
           i32 content_w = win.w;
           i32 content_h = win.h - TITLEBAR_H;
-          if (try_enter() == 0) {
-            win.app->on_click(win.app_state, rx, ry, content_w, content_h);
-            try_leave();
+          if (el0_app_call((void *)win.app->on_click,
+                (u64)win.app_state, (u64)rx, (u64)ry,
+                (u64)content_w, (u64)content_h, i)) {
+            /* success */
           } else {
             syslog::error("gui", "app crashed on click: %s", win.app->name);
             close_window(i);
@@ -1931,9 +1967,8 @@ void open_app(const char *app_id) {
   }
   windows[idx].app = const_cast<OgzApp *>(app);
   str::memset(windows[idx].app_state, 0, sizeof(windows[idx].app_state));
-  if (try_enter() == 0) {
-    app->on_open(windows[idx].app_state);
-    try_leave();
+  if (el0_app_call((void *)app->on_open,
+        (u64)windows[idx].app_state, 0, 0, 0, 0, idx)) {
     syslog::info("gui", "app opened: %s (window %d)", app->name, idx);
   } else {
     syslog::error("gui", "app crashed during open: %s", app->name);
@@ -1964,10 +1999,11 @@ void open_file(const char *path, const char *content) {
       if (idx >= 0) {
         windows[idx].app = const_cast<OgzApp *>(host);
         str::memset(windows[idx].app_state, 0, sizeof(windows[idx].app_state));
-        if (try_enter() == 0) {
-          host->on_open(windows[idx].app_state);
-          host->on_open_file(windows[idx].app_state, path, content);
-          try_leave();
+        if (el0_app_call((void *)host->on_open,
+              (u64)windows[idx].app_state, 0, 0, 0, 0, idx) &&
+            el0_app_call((void *)host->on_open_file,
+              (u64)windows[idx].app_state, (u64)path,
+              (u64)content, 0, 0, idx)) {
           syslog::info("gui", "launched C# app '%s' via csgui", name);
         } else {
           close_window(idx);
@@ -1988,10 +2024,11 @@ void open_file(const char *path, const char *content) {
         return;
       windows[idx].app = const_cast<OgzApp *>(app);
       str::memset(windows[idx].app_state, 0, sizeof(windows[idx].app_state));
-      if (try_enter() == 0) {
-        app->on_open(windows[idx].app_state);
-        app->on_open_file(windows[idx].app_state, path, content);
-        try_leave();
+      if (el0_app_call((void *)app->on_open,
+            (u64)windows[idx].app_state, 0, 0, 0, 0, idx) &&
+          el0_app_call((void *)app->on_open_file,
+            (u64)windows[idx].app_state, (u64)path,
+            (u64)content, 0, 0, idx)) {
         syslog::info("gui", "opened '%s' with %s", name, app->name);
       } else {
         close_window(idx);
@@ -2155,10 +2192,9 @@ void run() {
               mouse_y >= aw.y + TITLEBAR_H && mouse_y < aw.y + aw.h) {
             i32 rx = mouse_x - aw.x;
             i32 ry = mouse_y - (aw.y + TITLEBAR_H);
-            if (try_enter() == 0) {
-              aw.app->on_mouse_move(aw.app_state, rx, ry, aw.w,
-                                    aw.h - TITLEBAR_H);
-              try_leave();
+            if (el0_app_call((void *)aw.app->on_mouse_move,
+                  (u64)aw.app_state, (u64)rx, (u64)ry, (u64)aw.w,
+                  (u64)(aw.h - TITLEBAR_H), active_window)) {
               needs_redraw = true;
             }
           }
@@ -2177,9 +2213,8 @@ void run() {
               scroll_window(sw, -mscroll * 3);
               needs_redraw = true;
             } else if (sw.type == WIN_APP && sw.app && sw.app->on_scroll) {
-              if (try_enter() == 0) {
-                sw.app->on_scroll(sw.app_state, mscroll);
-                try_leave();
+              if (el0_app_call((void *)sw.app->on_scroll,
+                    (u64)sw.app_state, (u64)mscroll, 0, 0, 0, i)) {
                 needs_redraw = true;
               }
             }
@@ -2287,9 +2322,9 @@ void run() {
           else if (w.selected >= w.scroll + vis)
             w.scroll = w.selected - vis + 1;
         } else if (w.type == WIN_APP && w.app && w.app->on_arrow) {
-          if (try_enter() == 0) {
-            w.app->on_arrow(w.app_state, dir);
-            try_leave();
+          if (el0_app_call((void *)w.app->on_arrow,
+                (u64)w.app_state, (u64)dir, 0, 0, 0, active_window)) {
+            /* success */
           } else {
             close_window(active_window);
           }
@@ -2356,11 +2391,9 @@ void run() {
                       static_cast<unsigned int>(static_cast<u8>(key)),
                       w.app ? w.app->name : "?");
         if (w.app && w.app->on_key) {
-          if (try_enter() == 0) {
-            bool consumed = w.app->on_key(w.app_state, key);
-            try_leave();
-            if (consumed)
-              needs_redraw = true;
+          if (el0_app_call((void *)w.app->on_key,
+                (u64)w.app_state, (u64)key, 0, 0, 0, active_window)) {
+            needs_redraw = true;
           } else {
             syslog::error("gui", "app crashed on key: %s", w.app->name);
             close_window(active_window);

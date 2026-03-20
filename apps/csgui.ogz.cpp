@@ -1,10 +1,15 @@
 #include "app.h"
+#include "registry.h"
+
+#ifdef USERSPACE
+#include "userapi.h"
+#else
 #include "csharp.h"
 #include "fs.h"
 #include "graphics.h"
-#include "registry.h"
 #include "string.h"
 #include "syslog.h"
+#endif
 
 /*
  * csgui.ogz — C# GUI App Host

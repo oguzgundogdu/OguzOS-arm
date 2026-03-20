@@ -1,9 +1,14 @@
 #include "app.h"
+#include "registry.h"
+
+#ifdef USERSPACE
+#include "userapi.h"
+#else
 #include "graphics.h"
 #include "net.h"
-#include "registry.h"
 #include "string.h"
 #include "uart.h"
+#endif
 
 /*
  * browser.ogz — Yamur Web Browser for OguzOS

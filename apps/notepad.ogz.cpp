@@ -1,9 +1,13 @@
 #include "app.h"
+#include "registry.h"
+#ifdef USERSPACE
+#include "userapi.h"
+#else
 #include "fs.h"
 #include "graphics.h"
-#include "registry.h"
 #include "string.h"
 #include "syslog.h"
+#endif
 
 /*
  * notepad.ogz — OguzOS Notepad
