@@ -348,7 +348,7 @@ void cmd_halt() {
   // QEMU virt PSCI SYSTEM_OFF (0x84000008)
   u64 psci_off = 0x84000008;
   asm volatile("mov x0, %0\n"
-               "hvc #0\n" ::"r"(psci_off)
+               "smc #0\n" ::"r"(psci_off)
                : "x0");
   // If HVC doesn't work, just loop
   for (;;) {
@@ -615,7 +615,7 @@ void cmd_reboot() {
   // QEMU virt PSCI SYSTEM_RESET (0x84000009)
   u64 psci_reset = 0x84000009;
   asm volatile("mov x0, %0\n"
-               "hvc #0\n" ::"r"(psci_reset)
+               "smc #0\n" ::"r"(psci_reset)
                : "x0");
   for (;;) {
     asm volatile("wfe");

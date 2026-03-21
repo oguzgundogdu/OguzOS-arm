@@ -138,8 +138,15 @@ void term_exec(TermState *s) {
     if (dir_idx >= 0) {
       const fs::Node *dir = fs::get_node(dir_idx);
       if (dir && dir->type == fs::NodeType::Directory) {
-        for (usize i = 0; i < dir->child_count; i++) {
-          const fs::Node *child = fs::get_node(dir->children[i]);
+        // Save children info: get_node uses a single shared buffer,
+        // so fetching a child would overwrite the dir data.
+        usize cc = dir->child_count;
+        i32 ch[32];
+        for (usize j = 0; j < cc && j < 32; j++)
+          ch[j] = dir->children[j];
+
+        for (usize i = 0; i < cc; i++) {
+          const fs::Node *child = fs::get_node(ch[i]);
           if (child && child->used) {
             if (child->type == fs::NodeType::Directory)
               term_append(s, " [dir] ");
@@ -541,13 +548,13 @@ void term_exec(TermState *s) {
     if (disk::is_available()) fs::sync_to_disk();
     term_append(s, "System halted.\n");
     u64 psci_off = 0x84000008;
-    asm volatile("mov x0, %0\nhvc #0\n" ::"r"(psci_off) : "x0");
+    asm volatile("mov x0, %0\nsmc #0\n" ::"r"(psci_off) : "x0");
     for (;;) asm volatile("wfe");
   } else if (str::cmp(p, "reboot") == 0) {
     if (disk::is_available()) fs::sync_to_disk();
     term_append(s, "Rebooting...\n");
     u64 psci_reset = 0x84000009;
-    asm volatile("mov x0, %0\nhvc #0\n" ::"r"(psci_reset) : "x0");
+    asm volatile("mov x0, %0\nsmc #0\n" ::"r"(psci_reset) : "x0");
     for (;;) asm volatile("wfe");
   } else if (str::cmp(p, "cp") == 0) {
     char c1[200]; str::ncpy(c1, arg, 199);

@@ -125,6 +125,12 @@ bss_loop:
     b       bss_loop
 bss_done:
 
+    /* Allow EL0 to read the physical counter (CNTPCT_EL0) and
+       counter frequency (CNTFRQ_EL0).  Bit 0 = EL0PCTEN. */
+    mrs     x0, cntkctl_el1
+    orr     x0, x0, #1
+    msr     cntkctl_el1, x0
+
     /* Install exception vector table */
     ldr     x0, =exception_vectors
     msr     vbar_el1, x0

@@ -337,6 +337,10 @@ void taskman_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
     if (!title)
       continue;
 
+    // Copy title immediately — further syscalls overwrite the transfer buffer
+    char name[20];
+    str::ncpy(name, title, 19);
+
     bool active = gui::is_window_active(i);
     i32 wtype = gui::get_window_type(i);
     const char *app_id = gui::get_window_app_id(i);
@@ -355,8 +359,6 @@ void taskman_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
     gfx::draw_text(col_pid, y + 1, pid, COL_VALUE, row_bg);
 
     // Name column
-    char name[20];
-    str::ncpy(name, title, 19);
     gfx::draw_text(col_name, y + 1, name, COL_VALUE, row_bg);
 
     // Type column

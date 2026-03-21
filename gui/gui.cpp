@@ -1358,20 +1358,22 @@ void handle_menu_click(i32 item) {
   } else if (item == mi_restart) {
     // Sync filesystem to disk before reboot
     fs::sync_to_disk();
-    // PSCI SYSTEM_RESET (0x84000009)
+    // PSCI SYSTEM_RESET (0x84000009) via SMC
     u64 psci_reset = 0x84000009;
     asm volatile("mov x0, %0\n"
-                 "hvc #0\n" ::"r"(psci_reset)
+                 "smc #0\n" ::"r"(psci_reset)
                  : "x0");
     for (;;)
       asm volatile("wfe");
   } else if (item == mi_shutdown) {
     fs::sync_to_disk();
-    asm volatile("movz x0, #0x8400, lsl #16\n"
-                 "movk x0, #0x0008\n"
-                 "hvc #0\n" ::: "x0");
+    // PSCI SYSTEM_OFF (0x84000008) via SMC
+    u64 psci_off = 0x84000008;
+    asm volatile("mov x0, %0\n"
+                 "smc #0\n" ::"r"(psci_off)
+                 : "x0");
     for (;;)
-      asm volatile("wfi");
+      asm volatile("wfe");
   }
 }
 
@@ -1976,7 +1978,17 @@ void open_app(const char *app_id) {
   }
 }
 
+/* Static buffer for path strings passed to EL0 app callbacks.
+ * The caller's `path` may live on the kernel stack (L2[0], AP=00)
+ * which is not EL0-accessible, so we copy it here first. */
+static char el0_path_buf[256];
+
 void open_file(const char *path, const char *content) {
+  // Copy path to static EL0-accessible buffer (caller may pass stack pointer)
+  str::ncpy(el0_path_buf, path, 255);
+  el0_path_buf[255] = '\0';
+  path = el0_path_buf;
+
   // Extract filename from path
   const char *name = path;
   for (const char *p = path; *p; p++) {
