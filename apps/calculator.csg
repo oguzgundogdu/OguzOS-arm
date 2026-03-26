@@ -1,0 +1,158 @@
+using System;
+class Calc {
+    static string display;
+    static string op1;
+    static string op;
+    static bool fresh;
+    static bool err;
+    static Label lblD;
+    static Label lblE;
+    static int BW;
+    static int BH;
+    static int P;
+    static int SX;
+    static int SY;
+
+    static void Main() {
+        display = "0";
+        op1 = "";
+        op = "";
+        fresh = true;
+        err = false;
+        BW = 58;
+        BH = 44;
+        P = 4;
+        SX = 12;
+        SY = 72;
+        lblE = new Label(16, 12, "");
+        lblD = new Label(16, 38, "0");
+    }
+
+    static void Digit(string d) {
+        if (err) { return; }
+        if (fresh) { display = d; fresh = false; }
+        else {
+            if (display == "0") { display = d; }
+            else { display = display + d; }
+        }
+    }
+
+    static void DoOp(string nop) {
+        if (err) { return; }
+        if (op != "" && !fresh) { Equals(); }
+        op1 = display;
+        op = nop;
+        fresh = true;
+        lblE.SetText(op1 + " " + op);
+    }
+
+    static void Equals() {
+        if (err) { return; }
+        if (op == "") { return; }
+        int a = int.Parse(op1);
+        int b = int.Parse(display);
+        lblE.SetText(op1 + " " + op + " " + display + " =");
+        int r = 0;
+        if (op == "+") { r = a + b; }
+        if (op == "-") { r = a - b; }
+        if (op == "x") { r = a * b; }
+        if (op == "/") {
+            if (b == 0) { err = true; display = "Error"; lblE.SetText(""); op1 = ""; op = ""; fresh = true; return; }
+            r = a / b;
+        }
+        display = "" + r;
+        op1 = "";
+        op = "";
+        fresh = true;
+    }
+
+    static void Clear() {
+        display = "0";
+        op1 = "";
+        op = "";
+        fresh = true;
+        err = false;
+        lblE.SetText("");
+    }
+
+    static void Negate() {
+        if (err) { return; }
+        if (display == "0") { return; }
+        int v = int.Parse(display);
+        display = "" + (0 - v);
+    }
+
+    static void Back() {
+        if (err) { return; }
+        if (fresh) { return; }
+        display = "0";
+        fresh = true;
+    }
+
+    static void Btn(int c, int r, string t, int bg) {
+        int x = SX + c * (BW + P);
+        int y = SY + r * (BH + P);
+        Gfx.FillRect(x, y, BW, BH, bg);
+        Gfx.Rect(x, y, BW, BH, 0x444466);
+        Gfx.DrawText(x + (BW - 8) / 2, y + (BH - 15) / 2, t, 0xFFFFFF);
+    }
+
+    static void WBtn(int c, int r, int s, string t, int bg) {
+        int x = SX + c * (BW + P);
+        int y = SY + r * (BH + P);
+        int w = BW * s + P * (s - 1);
+        Gfx.FillRect(x, y, w, BH, bg);
+        Gfx.Rect(x, y, w, BH, 0x444466);
+        Gfx.DrawText(x + (w - 8) / 2, y + (BH - 15) / 2, t, 0xFFFFFF);
+    }
+
+    static void OnDraw(int w, int h) {
+        Gfx.Clear(0x1E1E2E);
+        Gfx.FillRect(8, 6, w - 16, 58, 0x181825);
+        Gfx.Rect(8, 6, w - 16, 58, 0x333355);
+        lblE.SetColor(0x888AAA);
+        lblE.SetPos(16, 12);
+        lblE.Draw();
+        if (err) { lblD.SetText("Error"); lblD.SetColor(0xF38BA8); }
+        else { lblD.SetText(display); lblD.SetColor(0xCDD6F4); }
+        lblD.SetPos(16, 38);
+        lblD.Draw();
+        Btn(0,0,"C",0xC0392B); Btn(1,0,"+/-",0x3D3D5C); Btn(2,0,"<",0x3D3D5C); Btn(3,0,"/",0x4A4070);
+        Btn(0,1,"7",0x333355); Btn(1,1,"8",0x333355); Btn(2,1,"9",0x333355); Btn(3,1,"x",0x4A4070);
+        Btn(0,2,"4",0x333355); Btn(1,2,"5",0x333355); Btn(2,2,"6",0x333355); Btn(3,2,"-",0x4A4070);
+        Btn(0,3,"1",0x333355); Btn(1,3,"2",0x333355); Btn(2,3,"3",0x333355); Btn(3,3,"+",0x4A4070);
+        WBtn(0,4,2,"0",0x333355); WBtn(2,4,2,"=",0x6C5CE7);
+    }
+
+    static void OnClick(int x, int y) {
+        int row = (y - SY) / (BH + P);
+        int col = (x - SX) / (BW + P);
+        if (row < 0) { return; } if (row > 4) { return; }
+        if (col < 0) { return; } if (col > 3) { return; }
+        int bx = SX + col * (BW + P);
+        int by = SY + row * (BH + P);
+        if (x < bx) { return; } if (y < by) { return; }
+        if (y >= by + BH) { return; }
+        if (row == 4) {
+            if (x < SX + 2 * (BW + P)) { Digit("0"); return; }
+            Equals(); return;
+        }
+        if (x >= bx + BW) { return; }
+        int b = row * 4 + col;
+        if (b==0) { Clear(); } if (b==1) { Negate(); } if (b==2) { Back(); } if (b==3) { DoOp("/"); }
+        if (b==4) { Digit("7"); } if (b==5) { Digit("8"); } if (b==6) { Digit("9"); } if (b==7) { DoOp("x"); }
+        if (b==8) { Digit("4"); } if (b==9) { Digit("5"); } if (b==10) { Digit("6"); } if (b==11) { DoOp("-"); }
+        if (b==12) { Digit("1"); } if (b==13) { Digit("2"); } if (b==14) { Digit("3"); } if (b==15) { DoOp("+"); }
+    }
+
+    static void OnKey(int k) {
+        if (k==48) { Digit("0"); } if (k==49) { Digit("1"); } if (k==50) { Digit("2"); }
+        if (k==51) { Digit("3"); } if (k==52) { Digit("4"); } if (k==53) { Digit("5"); }
+        if (k==54) { Digit("6"); } if (k==55) { Digit("7"); } if (k==56) { Digit("8"); }
+        if (k==57) { Digit("9"); }
+        if (k==43) { DoOp("+"); } if (k==45) { DoOp("-"); }
+        if (k==42) { DoOp("x"); } if (k==47) { DoOp("/"); }
+        if (k==61) { Equals(); } if (k==13) { Equals(); } if (k==10) { Equals(); }
+        if (k==27) { Clear(); } if (k==127) { Clear(); }
+    }
+}
