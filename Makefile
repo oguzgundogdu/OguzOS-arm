@@ -101,6 +101,7 @@ OBJS = $(BUILD_DIR)/boot.o \
        $(BUILD_DIR)/env.o \
        $(BUILD_DIR)/assoc.o \
        $(BUILD_DIR)/menu.o \
+       $(BUILD_DIR)/ui.o \
        $(BUILD_DIR)/commands.o \
        $(BUILD_DIR)/shell.o \
        $(BUILD_DIR)/calculator_embed.o \
@@ -217,6 +218,9 @@ $(BUILD_DIR)/assoc.o: $(LIB_DIR)/assoc.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/menu.o: $(LIB_DIR)/menu.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/ui.o: $(LIB_DIR)/ui.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/commands.o: $(SHELL_DIR)/commands.cpp | $(BUILD_DIR)

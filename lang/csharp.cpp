@@ -4,13 +4,14 @@
 #include "string.h"
 #include "syslog.h"
 #include "uart.h"
+#include "ui.h"
 
 namespace {
 
 // ── Limits ──────────────────────────────────────────────────────────────────
 constexpr i32 MAX_TOKENS = 8192;
-constexpr i32 MAX_VARS = 64;
-constexpr i32 MAX_FUNCS = 16;
+constexpr i32 MAX_VARS = 96;
+constexpr i32 MAX_FUNCS = 64;
 constexpr i32 MAX_CALL = 16;
 constexpr i32 MAX_SLEN = 96;
 
@@ -41,7 +42,7 @@ struct Token {
 };
 
 // ── Value types ─────────────────────────────────────────────────────────────
-enum VType : u8 { V_VOID, V_INT, V_STRING, V_BOOL, V_WIDGET };
+enum VType : u8 { V_VOID, V_INT, V_STRING, V_BOOL, V_OBJECT };
 
 struct Value {
   VType type;
@@ -56,6 +57,10 @@ Value make_bool(bool b) { Value v; v.type = V_BOOL; v.ival = 0; v.sval[0] = '\0'
 Value make_str(const char *s) {
   Value v; v.type = V_STRING; v.ival = 0; v.bval = false;
   str::ncpy(v.sval, s, MAX_SLEN - 1);
+  return v;
+}
+Value make_object(i32 obj_idx) {
+  Value v; v.type = V_OBJECT; v.ival = obj_idx; v.sval[0] = '\0'; v.bval = false;
   return v;
 }
 
@@ -78,6 +83,8 @@ struct Func {
   VType ret_type;
   Access access;
   char owner_class[32]; // class this method belongs to
+  bool is_static;       // true for static methods
+  bool is_ctor;         // true if constructor (name == class name)
 };
 
 // ── Interpreter state (file-static, reset each run) ─────────────────────────
@@ -93,11 +100,37 @@ i32 scope_depth;
 Func funcs[MAX_FUNCS];
 i32 func_count;
 
-// ── Class name registry (populated by pre-scan) ────────────────────────────
+// ── Class definitions (populated by scan) ───────────────────────────────────
 constexpr i32 MAX_CLASSES = 8;
-char class_names[MAX_CLASSES][32];
-bool class_is_window[MAX_CLASSES]; // true if class derives from Window
+constexpr i32 MAX_FIELDS_PER_CLASS = 8;
+
+struct FieldDef {
+  char name[32];
+  VType type;
+};
+
+struct ClassDef {
+  char name[32];
+  bool is_window;
+  i32 field_count;
+  FieldDef fields[MAX_FIELDS_PER_CLASS];
+  i32 ctor_func_idx; // index into funcs[], -1 = no constructor
+};
+
+ClassDef classes[MAX_CLASSES];
 i32 class_count;
+
+// ── Object instance pool ────────────────────────────────────────────────────
+constexpr i32 MAX_OBJECTS = 32;
+
+struct ObjInstance {
+  i32 class_idx; // -1 = free
+  Value fields[MAX_FIELDS_PER_CLASS];
+};
+
+ObjInstance objects[MAX_OBJECTS];
+i32 object_count;
+i32 this_obj_idx = -1; // current 'this' during instance method calls
 
 char *out;
 i32 out_cap;
@@ -113,6 +146,22 @@ i32 call_depth;
 bool gui_mode = false;
 bool close_requested = false;
 i32 draw_cx, draw_cy, draw_cw, draw_ch; // current draw context
+
+// ── Native UI component pool (backed by lib/ui.h) ──────────────────────────
+// Handle encoding: type * 16 + index
+// type: 0=label, 1=button, 2=textbox, 3=checkbox, 4=panel
+constexpr i32 UI_POOL_MAX = 16;
+ui::Label    ui_labels[UI_POOL_MAX];
+ui::Button   ui_buttons[UI_POOL_MAX];
+ui::TextBox  ui_textboxes[UI_POOL_MAX];
+ui::CheckBox ui_checkboxes[UI_POOL_MAX];
+ui::Panel    ui_panels[UI_POOL_MAX];
+i32 ui_label_n, ui_button_n, ui_textbox_n, ui_checkbox_n, ui_panel_n;
+
+constexpr i32 UIT_LABEL = 0, UIT_BUTTON = 1, UIT_TEXTBOX = 2, UIT_CHECKBOX = 3, UIT_PANEL = 4;
+i32 ui_handle(i32 type, i32 idx) { return type * UI_POOL_MAX + idx; }
+i32 ui_type(i32 h)  { return h / UI_POOL_MAX; }
+i32 ui_index(i32 h) { return h % UI_POOL_MAX; }
 
 // ── Library system (.ogzl) ──────────────────────────────────────────────────
 constexpr i32 MERGED_MAX = 16384;
@@ -240,174 +289,23 @@ void gfx_line(i32 x1, i32 y1, i32 x2, i32 y2, u32 color) {
   }
 }
 
-// ── Widget system ───────────────────────────────────────────────────────────
-constexpr i32 MAX_WIDGETS = 16;
-enum WType : u8 { W_NONE, W_LABEL, W_BUTTON, W_TEXTBOX, W_CHECKBOX, W_PANEL };
-
-struct Widget {
-  WType wtype;
-  i32 x, y, w, h;
-  char text[56];
-  bool checked;   // CheckBox
-  bool focused;   // TextBox
-  i32 cursor;     // TextBox cursor
-  u32 bg_color;   // Panel background
-  u32 fg_color;   // text/foreground color
-};
-
-Widget widgets[MAX_WIDGETS];
-i32 widget_count;
-
-Value make_widget(i32 handle) {
-  Value v; v.type = V_WIDGET; v.ival = handle; v.sval[0] = '\0'; v.bval = false;
-  return v;
-}
-
-i32 alloc_widget(WType wt) {
-  if (widget_count >= MAX_WIDGETS) return -1;
-  i32 idx = widget_count++;
-  str::memset(&widgets[idx], 0, sizeof(Widget));
-  widgets[idx].wtype = wt;
-  widgets[idx].fg_color = 0x00202020;
-  widgets[idx].bg_color = 0x00FFFFFF;
-  return idx;
-}
-
-// Widget rendering
-constexpr u32 W_COL_BTN = 0x00E0E0E0;
-constexpr u32 W_COL_BTN_BORDER = 0x00999999;
-constexpr u32 W_COL_BTN_TEXT = 0x00202020;
-constexpr u32 W_COL_TB_BG = 0x00FFFFFF;
-constexpr u32 W_COL_TB_BORDER = 0x00AAAAAA;
-constexpr u32 W_COL_TB_FOCUS = 0x003399FF;
-constexpr u32 W_COL_CB_CHECK = 0x003399FF;
-
-void draw_widget(Widget &w) {
-  i32 ax = draw_cx + w.x, ay = draw_cy + w.y;
-  i32 fh = gfx::font_h(), fw = gfx::font_w();
-
-  switch (w.wtype) {
-  case W_LABEL:
-    gfx::draw_text_nobg(ax, ay, w.text, w.fg_color);
-    break;
-
-  case W_BUTTON: {
-    gfx::fill_rect(ax, ay, w.w, w.h, W_COL_BTN);
-    gfx::rect(ax, ay, w.w, w.h, W_COL_BTN_BORDER);
-    // Highlight top-left edges
-    gfx::hline(ax + 1, ay + 1, w.w - 2, 0x00F8F8F8);
-    gfx::fill_rect(ax + 1, ay + 1, 1, w.h - 2, 0x00F8F8F8);
-    // Center text
-    i32 tw = gfx::text_width(w.text);
-    i32 tx = ax + (w.w - tw) / 2;
-    i32 ty = ay + (w.h - fh) / 2;
-    gfx::draw_text(tx, ty, w.text, W_COL_BTN_TEXT, W_COL_BTN);
-    break;
-  }
-
-  case W_TEXTBOX: {
-    u32 border = w.focused ? W_COL_TB_FOCUS : W_COL_TB_BORDER;
-    gfx::fill_rect(ax, ay, w.w, w.h, W_COL_TB_BG);
-    gfx::rect(ax, ay, w.w, w.h, border);
-    if (w.focused) gfx::rect(ax - 1, ay - 1, w.w + 2, w.h + 2, border);
-    i32 text_y = ay + (w.h - fh) / 2;
-    gfx::draw_text(ax + 4, text_y, w.text, 0x00202020, W_COL_TB_BG);
-    // Cursor
-    if (w.focused) {
-      i32 cx = ax + 4 + w.cursor * fw;
-      if (cx < ax + w.w - 2)
-        gfx::fill_rect(cx, ay + 3, 1, w.h - 6, 0x00000000);
-    }
-    break;
-  }
-
-  case W_CHECKBOX: {
-    i32 box_sz = fh;
-    gfx::fill_rect(ax, ay, box_sz, box_sz, 0x00FFFFFF);
-    gfx::rect(ax, ay, box_sz, box_sz, 0x00888888);
-    if (w.checked) {
-      // Draw check mark
-      gfx::fill_rect(ax + 3, ay + 3, box_sz - 6, box_sz - 6, W_COL_CB_CHECK);
-    }
-    gfx::draw_text_nobg(ax + box_sz + 6, ay, w.text, w.fg_color);
-    break;
-  }
-
-  case W_PANEL:
-    gfx::fill_rect(ax, ay, w.w, w.h, w.bg_color);
-    if (w.text[0])
-      gfx::draw_text_nobg(ax + 4, ay + 4, w.text, w.fg_color);
-    break;
-
-  case W_NONE: break;
-  }
-}
-
-bool widget_hit(Widget &w, i32 mx, i32 my) {
-  if (w.wtype == W_LABEL) {
-    i32 tw = gfx::text_width(w.text);
-    return mx >= w.x && mx < w.x + tw && my >= w.y && my < w.y + gfx::font_h();
-  }
-  if (w.wtype == W_CHECKBOX) {
-    i32 box_sz = gfx::font_h();
-    i32 total_w = box_sz + 6 + gfx::text_width(w.text);
-    return mx >= w.x && mx < w.x + total_w && my >= w.y && my < w.y + box_sz;
-  }
-  return mx >= w.x && mx < w.x + w.w && my >= w.y && my < w.y + w.h;
-}
-
-void textbox_key(Widget &w, i32 key) {
-  if (key == 0x7F || key == 0x08 || key == 8) {
-    // Backspace
-    if (w.cursor > 0) {
-      i32 len = static_cast<i32>(str::len(w.text));
-      for (i32 i = w.cursor - 1; i < len - 1; i++) w.text[i] = w.text[i + 1];
-      w.text[len - 1] = '\0';
-      w.cursor--;
-    }
-  } else if (key >= 32 && key <= 126) {
-    i32 len = static_cast<i32>(str::len(w.text));
-    if (len < 54) {
-      for (i32 i = len; i > w.cursor; i--) w.text[i] = w.text[i - 1];
-      w.text[w.cursor] = static_cast<char>(key);
-      w.cursor++;
-      w.text[len + 1] = '\0';
-    }
-  }
-}
-
-void textbox_click(Widget &w, i32 mx) {
-  i32 fw = gfx::font_w();
-  i32 col = (mx - w.x - 4) / fw;
-  if (col < 0) col = 0;
-  i32 len = static_cast<i32>(str::len(w.text));
-  if (col > len) col = len;
-  w.cursor = col;
-  // Unfocus all other textboxes, focus this one
-  for (i32 i = 0; i < widget_count; i++)
-    widgets[i].focused = false;
-  w.focused = true;
-}
-
-// Check if a name is a widget type
-bool is_widget_type(const char *name) {
-  return str::cmp(name, "Button") == 0 || str::cmp(name, "Label") == 0 ||
-         str::cmp(name, "TextBox") == 0 || str::cmp(name, "CheckBox") == 0 ||
-         str::cmp(name, "Panel") == 0;
+// Find class index by name, returns -1 if not found
+i32 find_class_idx(const char *name) {
+  for (i32 i = 0; i < class_count; i++)
+    if (str::cmp(classes[i].name, name) == 0) return i;
+  return -1;
 }
 
 // Check if a name is a declared class in the current source
 bool is_declared_class(const char *name) {
-  for (i32 i = 0; i < class_count; i++)
-    if (str::cmp(class_names[i], name) == 0) return true;
-  return false;
+  return find_class_idx(name) >= 0;
 }
 
-// Check if identifier is a valid type (widget, declared class, or known API class)
+// Check if identifier is a valid type (declared class or known API class)
 bool is_valid_type_ident(const char *name) {
-  return is_widget_type(name) || is_declared_class(name) ||
+  return is_declared_class(name) ||
          str::cmp(name, "Console") == 0 || str::cmp(name, "Gfx") == 0 ||
-         str::cmp(name, "App") == 0;
+         str::cmp(name, "App") == 0 || str::cmp(name, "UI") == 0;
 }
 
 // Pre-scan tokens to find all class declarations
@@ -415,13 +313,16 @@ void prescan_classes() {
   class_count = 0;
   for (i32 i = 0; i < tok_count - 1 && class_count < MAX_CLASSES; i++) {
     if (tokens[i].type == T_CLASS && tokens[i + 1].type == T_IDENT) {
+      ClassDef &cd = classes[class_count];
+      str::memset(&cd, 0, sizeof(ClassDef));
+      cd.ctor_func_idx = -1;
       Token &t = tokens[i + 1];
       i32 len = t.len;
       if (len > 31) len = 31;
-      for (i32 j = 0; j < len; j++) class_names[class_count][j] = src[t.pos + j];
-      class_names[class_count][len] = '\0';
+      for (i32 j = 0; j < len; j++) cd.name[j] = src[t.pos + j];
+      cd.name[len] = '\0';
       // Check for ": Window" inheritance
-      class_is_window[class_count] = false;
+      cd.is_window = false;
       if (i + 2 < tok_count && tokens[i + 2].type == T_COLON &&
           i + 3 < tok_count && tokens[i + 3].type == T_IDENT) {
         char base[32];
@@ -430,21 +331,52 @@ void prescan_classes() {
         for (i32 j = 0; j < bl; j++) base[j] = src[tokens[i + 3].pos + j];
         base[bl] = '\0';
         if (str::cmp(base, "Window") == 0)
-          class_is_window[class_count] = true;
+          cd.is_window = true;
       }
       class_count++;
     }
   }
 }
 
-WType widget_type_from_name(const char *name) {
-  if (str::cmp(name, "Label") == 0) return W_LABEL;
-  if (str::cmp(name, "Button") == 0) return W_BUTTON;
-  if (str::cmp(name, "TextBox") == 0) return W_TEXTBOX;
-  if (str::cmp(name, "CheckBox") == 0) return W_CHECKBOX;
-  if (str::cmp(name, "Panel") == 0) return W_PANEL;
-  return W_NONE;
+// Find instance method by class name and method name
+Func *find_instance_method(const char *class_name, const char *method_name) {
+  for (i32 i = 0; i < func_count; i++) {
+    if (!funcs[i].is_static && !funcs[i].is_ctor &&
+        str::cmp(funcs[i].owner_class, class_name) == 0 &&
+        str::cmp(funcs[i].name, method_name) == 0)
+      return &funcs[i];
+  }
+  return nullptr;
 }
+
+// Push object's field values as local variables
+void push_instance_fields(i32 obj_idx) {
+  ObjInstance &obj = objects[obj_idx];
+  ClassDef &cls = classes[obj.class_idx];
+  for (i32 f = 0; f < cls.field_count; f++) {
+    if (var_count < MAX_VARS) {
+      Var &v = vars[var_count++];
+      str::ncpy(v.name, cls.fields[f].name, 31);
+      v.val = obj.fields[f];
+      v.scope = scope_depth;
+    }
+  }
+}
+
+// Write back local variable values to object's fields
+void pop_instance_fields(i32 obj_idx, i32 base_var_count) {
+  ObjInstance &obj = objects[obj_idx];
+  ClassDef &cls = classes[obj.class_idx];
+  for (i32 f = 0; f < cls.field_count; f++) {
+    for (i32 v = base_var_count; v < var_count; v++) {
+      if (str::cmp(vars[v].name, cls.fields[f].name) == 0) {
+        obj.fields[f] = vars[v].val;
+        break;
+      }
+    }
+  }
+}
+
 
 // ── Output helpers ──────────────────────────────────────────────────────────
 void emit(const char *s) {
@@ -710,7 +642,7 @@ void pop_scope() {
 // ── Function management ─────────────────────────────────────────────────────
 Func *find_func(const char *name) {
   for (i32 i = 0; i < func_count; i++) {
-    if (str::cmp(funcs[i].name, name) == 0)
+    if (!funcs[i].is_ctor && str::cmp(funcs[i].name, name) == 0)
       return &funcs[i];
   }
   return nullptr;
@@ -773,74 +705,82 @@ Value parse_primary() {
     return make_bool(v.ival == 0);
   }
 
-  // new WidgetType(args...)
+  // new ClassName(args...)
   if (match(T_NEW)) {
     char tname[32];
     tok_text(cur(), tname, 32);
     expect(T_IDENT);
     expect(T_LPAREN);
 
-    WType wt = widget_type_from_name(tname);
-    if (wt == W_NONE) {
-      // Not a widget — check if it's a declared class (user-defined type)
-      if (is_declared_class(tname)) {
-        // Skip constructor arguments and return a placeholder value
-        i32 depth = 1;
-        while (depth > 0 && !at(T_EOF)) {
-          if (match(T_LPAREN)) depth++;
-          else if (at(T_RPAREN)) { depth--; if (depth > 0) tp++; }
-          else tp++;
-        }
-        expect(T_RPAREN);
-        return make_int(1); // placeholder object reference
-      }
+    i32 ci = find_class_idx(tname);
+    if (ci < 0) {
       error("unknown type for new");
+      while (!at(T_RPAREN) && !at(T_EOF)) tp++;
       expect(T_RPAREN);
       return make_void();
     }
 
-    i32 idx = alloc_widget(wt);
-    if (idx < 0) { error("too many widgets"); expect(T_RPAREN); return make_void(); }
-    Widget &w = widgets[idx];
+    // Allocate object instance
+    if (object_count >= MAX_OBJECTS) {
+      error("too many objects");
+      while (!at(T_RPAREN) && !at(T_EOF)) tp++;
+      expect(T_RPAREN);
+      return make_void();
+    }
+    i32 oi = object_count++;
+    ObjInstance &obj = objects[oi];
+    obj.class_idx = ci;
 
-    if (wt == W_LABEL) {
-      // new Label(x, y, "text")
-      w.x = parse_expr().ival; expect(T_COMMA);
-      w.y = parse_expr().ival; expect(T_COMMA);
-      Value t = parse_expr();
-      str::ncpy(w.text, t.sval, 55);
-    } else if (wt == W_BUTTON) {
-      // new Button(x, y, w, h, "text")
-      w.x = parse_expr().ival; expect(T_COMMA);
-      w.y = parse_expr().ival; expect(T_COMMA);
-      w.w = parse_expr().ival; expect(T_COMMA);
-      w.h = parse_expr().ival; expect(T_COMMA);
-      Value t = parse_expr();
-      str::ncpy(w.text, t.sval, 55);
-    } else if (wt == W_TEXTBOX) {
-      // new TextBox(x, y, w, h)
-      w.x = parse_expr().ival; expect(T_COMMA);
-      w.y = parse_expr().ival; expect(T_COMMA);
-      w.w = parse_expr().ival; expect(T_COMMA);
-      w.h = parse_expr().ival;
-    } else if (wt == W_CHECKBOX) {
-      // new CheckBox(x, y, "text")
-      w.x = parse_expr().ival; expect(T_COMMA);
-      w.y = parse_expr().ival; expect(T_COMMA);
-      Value t = parse_expr();
-      str::ncpy(w.text, t.sval, 55);
-      w.h = gfx::font_h();
-    } else if (wt == W_PANEL) {
-      // new Panel(x, y, w, h, color)
-      w.x = parse_expr().ival; expect(T_COMMA);
-      w.y = parse_expr().ival; expect(T_COMMA);
-      w.w = parse_expr().ival; expect(T_COMMA);
-      w.h = parse_expr().ival; expect(T_COMMA);
-      w.bg_color = static_cast<u32>(parse_expr().ival);
+    // Initialize fields to defaults
+    for (i32 f = 0; f < classes[ci].field_count; f++) {
+      switch (classes[ci].fields[f].type) {
+      case V_STRING: obj.fields[f] = make_str(""); break;
+      case V_BOOL:   obj.fields[f] = make_bool(false); break;
+      case V_OBJECT: obj.fields[f] = make_object(-1); break;
+      default:       obj.fields[f] = make_int(0); break;
+      }
     }
 
+    // Parse constructor arguments
+    Value args[6];
+    i32 argc = 0;
+    while (!at(T_RPAREN) && !at(T_EOF) && argc < 6) {
+      args[argc++] = parse_expr();
+      if (!match(T_COMMA)) break;
+    }
     expect(T_RPAREN);
-    return make_widget(idx);
+
+    // Call constructor if it exists
+    i32 ctor_idx = classes[ci].ctor_func_idx;
+    if (ctor_idx >= 0) {
+      Func *ctor = &funcs[ctor_idx];
+
+      i32 saved_this = this_obj_idx;
+      this_obj_idx = oi;
+      i32 saved_tp = tp;
+      i32 saved_var_count = var_count;
+      i32 saved_scope = scope_depth;
+
+      scope_depth++;
+      call_depth++;
+      push_instance_fields(oi);
+      for (i32 i = 0; i < argc && i < ctor->param_count; i++)
+        add_var(ctor->params[i], args[i]);
+
+      had_return = false;
+      tp = ctor->tok_start;
+      exec_block();
+
+      pop_instance_fields(oi, saved_var_count);
+      call_depth--;
+      var_count = saved_var_count;
+      scope_depth = saved_scope;
+      tp = saved_tp;
+      had_return = false;
+      this_obj_idx = saved_this;
+    }
+
+    return make_object(oi);
   }
 
   // int.Parse(string) → convert string to int
@@ -980,104 +920,282 @@ Value parse_primary() {
       }
     }
 
-    // Widget method call: variable.Method(args)
+    // UI.* native component API (backed by lib/ui.h)
+    if (str::cmp(name, "UI") == 0 && match(T_DOT)) {
+      char method[32];
+      tok_text(cur(), method, 32);
+      tp++;
+      expect(T_LPAREN);
+
+      // Creation
+      if (str::cmp(method, "CreateLabel") == 0) {
+        i32 x = parse_expr().ival; expect(T_COMMA);
+        i32 y = parse_expr().ival; expect(T_COMMA);
+        Value t = parse_expr();
+        expect(T_RPAREN);
+        if (ui_label_n < UI_POOL_MAX) {
+          ui_labels[ui_label_n] = ui::make_label(x, y, t.sval);
+          return make_int(ui_handle(UIT_LABEL, ui_label_n++));
+        }
+        return make_int(-1);
+      }
+      if (str::cmp(method, "CreateButton") == 0) {
+        i32 x = parse_expr().ival; expect(T_COMMA);
+        i32 y = parse_expr().ival; expect(T_COMMA);
+        i32 w = parse_expr().ival; expect(T_COMMA);
+        i32 h = parse_expr().ival; expect(T_COMMA);
+        Value t = parse_expr();
+        expect(T_RPAREN);
+        if (ui_button_n < UI_POOL_MAX) {
+          ui_buttons[ui_button_n] = ui::make_button(x, y, w, h, t.sval);
+          return make_int(ui_handle(UIT_BUTTON, ui_button_n++));
+        }
+        return make_int(-1);
+      }
+      if (str::cmp(method, "CreateTextBox") == 0) {
+        i32 x = parse_expr().ival; expect(T_COMMA);
+        i32 y = parse_expr().ival; expect(T_COMMA);
+        i32 w = parse_expr().ival; expect(T_COMMA);
+        i32 h = parse_expr().ival;
+        expect(T_RPAREN);
+        if (ui_textbox_n < UI_POOL_MAX) {
+          ui_textboxes[ui_textbox_n] = ui::make_textbox(x, y, w, h);
+          return make_int(ui_handle(UIT_TEXTBOX, ui_textbox_n++));
+        }
+        return make_int(-1);
+      }
+      if (str::cmp(method, "CreateCheckBox") == 0) {
+        i32 x = parse_expr().ival; expect(T_COMMA);
+        i32 y = parse_expr().ival; expect(T_COMMA);
+        Value t = parse_expr();
+        expect(T_RPAREN);
+        if (ui_checkbox_n < UI_POOL_MAX) {
+          ui_checkboxes[ui_checkbox_n] = ui::make_checkbox(x, y, t.sval);
+          return make_int(ui_handle(UIT_CHECKBOX, ui_checkbox_n++));
+        }
+        return make_int(-1);
+      }
+      if (str::cmp(method, "CreatePanel") == 0) {
+        i32 x = parse_expr().ival; expect(T_COMMA);
+        i32 y = parse_expr().ival; expect(T_COMMA);
+        i32 w = parse_expr().ival; expect(T_COMMA);
+        i32 h = parse_expr().ival; expect(T_COMMA);
+        i32 c = parse_expr().ival;
+        expect(T_RPAREN);
+        if (ui_panel_n < UI_POOL_MAX) {
+          ui_panels[ui_panel_n] = ui::make_panel(x, y, w, h, static_cast<u32>(c));
+          return make_int(ui_handle(UIT_PANEL, ui_panel_n++));
+        }
+        return make_int(-1);
+      }
+
+      // Draw
+      if (str::cmp(method, "Draw") == 0) {
+        i32 h = parse_expr().ival;
+        expect(T_RPAREN);
+        if (gui_mode && h >= 0) {
+          i32 t = ui_type(h), idx = ui_index(h);
+          if (t == UIT_LABEL   && idx < ui_label_n)    ui_labels[idx].draw(draw_cx, draw_cy);
+          if (t == UIT_BUTTON  && idx < ui_button_n)   ui_buttons[idx].draw(draw_cx, draw_cy);
+          if (t == UIT_TEXTBOX && idx < ui_textbox_n)  ui_textboxes[idx].draw(draw_cx, draw_cy);
+          if (t == UIT_CHECKBOX&& idx < ui_checkbox_n) ui_checkboxes[idx].draw(draw_cx, draw_cy);
+          if (t == UIT_PANEL   && idx < ui_panel_n)    ui_panels[idx].draw(draw_cx, draw_cy);
+        }
+        return make_void();
+      }
+
+      // HitTest
+      if (str::cmp(method, "HitTest") == 0) {
+        i32 h = parse_expr().ival; expect(T_COMMA);
+        i32 mx = parse_expr().ival; expect(T_COMMA);
+        i32 my = parse_expr().ival;
+        expect(T_RPAREN);
+        if (h >= 0) {
+          i32 t = ui_type(h), idx = ui_index(h);
+          if (t == UIT_LABEL   && idx < ui_label_n)    return make_bool(ui_labels[idx].hit_test(mx, my));
+          if (t == UIT_BUTTON  && idx < ui_button_n)   return make_bool(ui_buttons[idx].hit_test(mx, my));
+          if (t == UIT_TEXTBOX && idx < ui_textbox_n)  return make_bool(ui_textboxes[idx].hit_test(mx, my));
+          if (t == UIT_CHECKBOX&& idx < ui_checkbox_n) return make_bool(ui_checkboxes[idx].hit_test(mx, my));
+        }
+        return make_bool(false);
+      }
+
+      // SetText
+      if (str::cmp(method, "SetText") == 0) {
+        i32 h = parse_expr().ival; expect(T_COMMA);
+        Value t = parse_expr();
+        expect(T_RPAREN);
+        if (h >= 0) {
+          i32 ty = ui_type(h), idx = ui_index(h);
+          if (ty == UIT_LABEL   && idx < ui_label_n)    ui_labels[idx].set_text(t.sval);
+          if (ty == UIT_BUTTON  && idx < ui_button_n)   ui_buttons[idx].set_text(t.sval);
+          if (ty == UIT_TEXTBOX && idx < ui_textbox_n)  ui_textboxes[idx].set_text(t.sval);
+          if (ty == UIT_CHECKBOX&& idx < ui_checkbox_n) ui_checkboxes[idx].set_text(t.sval);
+          if (ty == UIT_PANEL   && idx < ui_panel_n)    ui_panels[idx].set_text(t.sval);
+        }
+        return make_void();
+      }
+
+      // GetText
+      if (str::cmp(method, "GetText") == 0) {
+        i32 h = parse_expr().ival;
+        expect(T_RPAREN);
+        if (h >= 0) {
+          i32 t = ui_type(h), idx = ui_index(h);
+          if (t == UIT_LABEL   && idx < ui_label_n)    return make_str(ui_labels[idx].text);
+          if (t == UIT_BUTTON  && idx < ui_button_n)   return make_str(ui_buttons[idx].text);
+          if (t == UIT_TEXTBOX && idx < ui_textbox_n)  return make_str(ui_textboxes[idx].get_text());
+        }
+        return make_str("");
+      }
+
+      // SetPos
+      if (str::cmp(method, "SetPos") == 0) {
+        i32 h = parse_expr().ival; expect(T_COMMA);
+        i32 px = parse_expr().ival; expect(T_COMMA);
+        i32 py = parse_expr().ival;
+        expect(T_RPAREN);
+        if (h >= 0) {
+          i32 t = ui_type(h), idx = ui_index(h);
+          if (t == UIT_LABEL   && idx < ui_label_n)    { ui_labels[idx].x = px; ui_labels[idx].y = py; }
+          if (t == UIT_BUTTON  && idx < ui_button_n)   { ui_buttons[idx].x = px; ui_buttons[idx].y = py; }
+          if (t == UIT_TEXTBOX && idx < ui_textbox_n)  { ui_textboxes[idx].x = px; ui_textboxes[idx].y = py; }
+          if (t == UIT_CHECKBOX&& idx < ui_checkbox_n) { ui_checkboxes[idx].x = px; ui_checkboxes[idx].y = py; }
+          if (t == UIT_PANEL   && idx < ui_panel_n)    { ui_panels[idx].x = px; ui_panels[idx].y = py; }
+        }
+        return make_void();
+      }
+
+      // SetColor (label/checkbox)
+      if (str::cmp(method, "SetColor") == 0) {
+        i32 h = parse_expr().ival; expect(T_COMMA);
+        i32 c = parse_expr().ival;
+        expect(T_RPAREN);
+        if (h >= 0) {
+          i32 t = ui_type(h), idx = ui_index(h);
+          if (t == UIT_LABEL   && idx < ui_label_n)    ui_labels[idx].color = static_cast<u32>(c);
+          if (t == UIT_CHECKBOX&& idx < ui_checkbox_n) ui_checkboxes[idx].color = static_cast<u32>(c);
+        }
+        return make_void();
+      }
+
+      // Toggle (checkbox)
+      if (str::cmp(method, "Toggle") == 0) {
+        i32 h = parse_expr().ival;
+        expect(T_RPAREN);
+        if (h >= 0 && ui_type(h) == UIT_CHECKBOX && ui_index(h) < ui_checkbox_n)
+          ui_checkboxes[ui_index(h)].toggle();
+        return make_void();
+      }
+
+      // IsChecked (checkbox)
+      if (str::cmp(method, "IsChecked") == 0) {
+        i32 h = parse_expr().ival;
+        expect(T_RPAREN);
+        if (h >= 0 && ui_type(h) == UIT_CHECKBOX && ui_index(h) < ui_checkbox_n)
+          return make_bool(ui_checkboxes[ui_index(h)].checked);
+        return make_bool(false);
+      }
+
+      // Click (textbox)
+      if (str::cmp(method, "Click") == 0) {
+        i32 h = parse_expr().ival; expect(T_COMMA);
+        i32 mx = parse_expr().ival;
+        expect(T_RPAREN);
+        if (h >= 0 && ui_type(h) == UIT_TEXTBOX && ui_index(h) < ui_textbox_n)
+          ui_textboxes[ui_index(h)].click(mx);
+        return make_void();
+      }
+
+      // Key (textbox)
+      if (str::cmp(method, "Key") == 0) {
+        i32 h = parse_expr().ival; expect(T_COMMA);
+        i32 k = parse_expr().ival;
+        expect(T_RPAREN);
+        if (h >= 0 && ui_type(h) == UIT_TEXTBOX && ui_index(h) < ui_textbox_n)
+          ui_textboxes[ui_index(h)].key(k);
+        return make_void();
+      }
+
+      // Focus (textbox)
+      if (str::cmp(method, "Focus") == 0) {
+        i32 h = parse_expr().ival;
+        expect(T_RPAREN);
+        if (h >= 0 && ui_type(h) == UIT_TEXTBOX && ui_index(h) < ui_textbox_n)
+          ui_textboxes[ui_index(h)].focus();
+        return make_void();
+      }
+
+      error("unknown UI method");
+      expect(T_RPAREN);
+      return make_void();
+    }
+
+    // Object method call: variable.Method(args)
     if (at(T_DOT)) {
       Var *wv = find_var(name);
-      if (wv && wv->val.type == V_WIDGET && wv->val.ival >= 0 &&
-          wv->val.ival < widget_count) {
+      if (wv && wv->val.type == V_OBJECT && wv->val.ival >= 0 &&
+          wv->val.ival < object_count) {
         tp++; // skip dot
         char method[32];
         tok_text(cur(), method, 32);
         tp++; // skip method name
-        Widget &w = widgets[wv->val.ival];
 
-        // .Draw()
-        if (str::cmp(method, "Draw") == 0) {
-          expect(T_LPAREN); expect(T_RPAREN);
-          if (gui_mode) draw_widget(w);
+        i32 oi = wv->val.ival;
+        i32 ci = objects[oi].class_idx;
+        Func *fn = find_instance_method(classes[ci].name, method);
+        if (!fn) {
+          char errbuf[64];
+          str::cpy(errbuf, "unknown method '");
+          str::cat(errbuf, method);
+          str::cat(errbuf, "'");
+          error(errbuf);
           return make_void();
         }
-        // .HitTest(x, y)
-        if (str::cmp(method, "HitTest") == 0) {
-          expect(T_LPAREN);
-          i32 mx = parse_expr().ival; expect(T_COMMA);
-          i32 my = parse_expr().ival; expect(T_RPAREN);
-          return make_bool(widget_hit(w, mx, my));
+
+        expect(T_LPAREN);
+        Value args[6];
+        i32 argc = 0;
+        while (!at(T_RPAREN) && !at(T_EOF) && argc < 6) {
+          args[argc++] = parse_expr();
+          if (!match(T_COMMA)) break;
         }
-        // .SetText("text")
-        if (str::cmp(method, "SetText") == 0) {
-          expect(T_LPAREN);
-          Value t = parse_expr(); expect(T_RPAREN);
-          str::ncpy(w.text, t.sval, 55);
-          return make_void();
-        }
-        // .GetText()
-        if (str::cmp(method, "GetText") == 0) {
-          expect(T_LPAREN); expect(T_RPAREN);
-          return make_str(w.text);
-        }
-        // .SetPos(x, y)
-        if (str::cmp(method, "SetPos") == 0) {
-          expect(T_LPAREN);
-          w.x = parse_expr().ival; expect(T_COMMA);
-          w.y = parse_expr().ival; expect(T_RPAREN);
-          return make_void();
-        }
-        // .SetSize(w, h)
-        if (str::cmp(method, "SetSize") == 0) {
-          expect(T_LPAREN);
-          w.w = parse_expr().ival; expect(T_COMMA);
-          w.h = parse_expr().ival; expect(T_RPAREN);
-          return make_void();
-        }
-        // .SetColor(fg) or .SetColor(fg, bg)
-        if (str::cmp(method, "SetColor") == 0) {
-          expect(T_LPAREN);
-          w.fg_color = static_cast<u32>(parse_expr().ival);
-          if (match(T_COMMA))
-            w.bg_color = static_cast<u32>(parse_expr().ival);
-          expect(T_RPAREN);
-          return make_void();
-        }
-        // TextBox: .Click(x, y)
-        if (str::cmp(method, "Click") == 0 && w.wtype == W_TEXTBOX) {
-          expect(T_LPAREN);
-          i32 mx = parse_expr().ival; expect(T_COMMA);
-          parse_expr(); // y (unused for textbox)
-          expect(T_RPAREN);
-          textbox_click(w, mx);
-          return make_void();
-        }
-        // TextBox: .Key(k)
-        if (str::cmp(method, "Key") == 0 && w.wtype == W_TEXTBOX) {
-          expect(T_LPAREN);
-          i32 k = parse_expr().ival; expect(T_RPAREN);
-          textbox_key(w, k);
-          return make_void();
-        }
-        // TextBox: .Focus()
-        if (str::cmp(method, "Focus") == 0 && w.wtype == W_TEXTBOX) {
-          expect(T_LPAREN); expect(T_RPAREN);
-          for (i32 i = 0; i < widget_count; i++) widgets[i].focused = false;
-          w.focused = true;
-          return make_void();
-        }
-        // CheckBox: .Toggle()
-        if (str::cmp(method, "Toggle") == 0 && w.wtype == W_CHECKBOX) {
-          expect(T_LPAREN); expect(T_RPAREN);
-          w.checked = !w.checked;
-          return make_void();
-        }
-        // CheckBox: .IsChecked()
-        if (str::cmp(method, "IsChecked") == 0 && w.wtype == W_CHECKBOX) {
-          expect(T_LPAREN); expect(T_RPAREN);
-          return make_bool(w.checked);
-        }
-        error("unknown widget method");
-        return make_void();
+        expect(T_RPAREN);
+
+        // Call instance method with this context
+        i32 saved_this = this_obj_idx;
+        this_obj_idx = oi;
+        i32 saved_tp = tp;
+        i32 saved_var_count = var_count;
+        i32 saved_scope = scope_depth;
+        bool saved_return = had_return;
+        Value saved_retval = return_val;
+
+        scope_depth++;
+        call_depth++;
+        push_instance_fields(oi);
+        for (i32 i = 0; i < argc && i < fn->param_count; i++)
+          add_var(fn->params[i], args[i]);
+
+        had_return = false;
+        return_val = make_void();
+        tp = fn->tok_start;
+        exec_block();
+
+        Value result = had_return ? return_val : make_void();
+        pop_instance_fields(oi, saved_var_count);
+        call_depth--;
+        var_count = saved_var_count;
+        scope_depth = saved_scope;
+        tp = saved_tp;
+        had_return = saved_return;
+        return_val = saved_retval;
+        this_obj_idx = saved_this;
+
+        return result;
       }
 
-      // Non-widget variable with dot: obj.Method() → call Method as a function
+      // Non-object variable with dot: obj.Method() → call Method as a function
       if (wv) {
         tp++; // skip dot
         char method[32];
@@ -1427,17 +1545,17 @@ void exec_stmt() {
     return;
   }
 
-  // Widget/custom type declaration: Button btn; / Button btn = new Button(...);
+  // Class/custom type declaration: Button btn; / Button btn = new Button(...);
   if (at(T_IDENT) && peek(1).type == T_IDENT &&
       (peek(2).type == T_SEMI || peek(2).type == T_ASSIGN)) {
     char tname[32];
     tok_text(cur(), tname, 32);
-    if (is_widget_type(tname)) {
+    if (is_declared_class(tname)) {
       tp++; // skip type name
       char vname[32];
       tok_text(cur(), vname, 32);
       expect(T_IDENT);
-      Value init = make_widget(-1); // uninitialized widget
+      Value init = make_object(-1); // null reference
       if (match(T_ASSIGN)) {
         init = parse_expr();
       }
@@ -1712,37 +1830,55 @@ void scan_functions() {
           else if (cur().type == T_PROTECTED) mem_access = ACC_PROTECTED;
           tp++;
         }
-        match(T_STATIC);
+        bool mem_is_static = match(T_STATIC);
 
         if (at(T_RBRACE) || at(T_EOF)) break;
+
+        // Check for constructor: ClassName( → no return type, name == class name
+        bool is_ctor = false;
+        {
+          i32 peek = tp;
+          if (tokens[peek].type == T_IDENT) {
+            char peek_name[32]; tok_text(tokens[peek], peek_name, 32);
+            if (str::cmp(peek_name, cur_class) == 0 &&
+                peek + 1 < tok_count && tokens[peek + 1].type == T_LPAREN)
+              is_ctor = true;
+          }
+        }
 
         // Peek ahead to determine: field or method?
         // Pattern: <type> <name> ( → method
         // Pattern: <type> <name> ; or = → field
-        // Type can be a keyword (void, int, string, bool...) or an identifier
         i32 saved = tp;
-        bool is_method = false;
+        bool is_method = is_ctor;
         bool is_field = false;
-        if (is_type_keyword(cur().type) || at(T_IDENT)) {
-          tp++; // skip type
-          if (at(T_IDENT)) {
-            tp++; // skip name
-            if (at(T_LPAREN)) is_method = true;
-            else is_field = true;
+        if (!is_ctor) {
+          if (is_type_keyword(cur().type) || at(T_IDENT)) {
+            tp++; // skip type
+            if (at(T_IDENT)) {
+              tp++; // skip name
+              if (at(T_LPAREN)) is_method = true;
+              else is_field = true;
+            }
           }
+          tp = saved; // restore
         }
-        tp = saved; // restore
 
         if (is_method) {
           if (func_count >= MAX_FUNCS) { error("too many functions"); return; }
           Func &fn = funcs[func_count];
+          str::memset(&fn, 0, sizeof(Func));
+          fn.is_static = mem_is_static;
+          fn.is_ctor = is_ctor;
 
-          // Parse return type
-          if (is_type_keyword(cur().type)) {
+          if (is_ctor) {
+            // Constructor: no return type
+            fn.ret_type = V_VOID;
+          } else if (is_type_keyword(cur().type)) {
             fn.ret_type = parse_type_kw();
           } else if (at(T_IDENT)) {
             char rtn[32]; tok_text(cur(), rtn, 32);
-            if (!is_valid_type_ident(rtn) && !is_widget_type(rtn)) {
+            if (!is_valid_type_ident(rtn)) {
               char errbuf[64];
               str::cpy(errbuf, "unknown return type '");
               str::cat(errbuf, rtn);
@@ -1767,7 +1903,7 @@ void scan_functions() {
               fn.param_types[fn.param_count] = parse_type_kw();
             } else if (at(T_IDENT)) {
               char ptn[32]; tok_text(cur(), ptn, 32);
-              if (!is_valid_type_ident(ptn) && !is_widget_type(ptn)) {
+              if (!is_valid_type_ident(ptn)) {
                 char errbuf[64];
                 str::cpy(errbuf, "unknown parameter type '");
                 str::cat(errbuf, ptn);
@@ -1796,15 +1932,22 @@ void scan_functions() {
           fn.tok_start = tp;
           fn.access = mem_access;
           str::ncpy(fn.owner_class, cur_class, 31);
+
+          // Register constructor in class def
+          if (is_ctor) {
+            i32 ci = find_class_idx(cur_class);
+            if (ci >= 0) classes[ci].ctor_func_idx = func_count;
+          }
+
           func_count++;
           skip_block();
         } else if (is_field) {
-          // Field declaration: register as global variable, skip to ;
-          bool is_wtype = false;
+          // Determine field type
+          VType ftype = V_INT;
+          bool is_class_type = false;
           if (at(T_IDENT)) {
             char tn[32]; tok_text(cur(), tn, 32);
-            is_wtype = is_widget_type(tn);
-            if (!is_wtype && !is_valid_type_ident(tn)) {
+            if (!is_valid_type_ident(tn) && !is_type_keyword(cur().type)) {
               char errbuf[64];
               str::cpy(errbuf, "unknown type '");
               str::cat(errbuf, tn);
@@ -1812,17 +1955,34 @@ void scan_functions() {
               error(errbuf);
               return;
             }
-          } else if (!is_type_keyword(cur().type)) {
+            is_class_type = is_declared_class(tn);
+          } else if (is_type_keyword(cur().type)) {
+            if (cur().type == T_STRING) ftype = V_STRING;
+            else if (cur().type == T_BOOL) ftype = V_BOOL;
+            else ftype = V_INT;
+          } else {
             error("expected type in field declaration");
             return;
           }
           tp++; // skip type
           char vn[32]; tok_text(cur(), vn, 32);
           tp++; // skip name
-          if (is_wtype)
-            add_var(vn, make_widget(-1));
-          else
-            add_var(vn, make_int(0));
+
+          if (mem_is_static) {
+            // Static field → global variable
+            if (is_class_type)
+              add_var(vn, make_object(-1));
+            else
+              add_var(vn, ftype == V_STRING ? make_str("") : ftype == V_BOOL ? make_bool(false) : make_int(0));
+          } else {
+            // Instance field → register in ClassDef
+            i32 ci = find_class_idx(cur_class);
+            if (ci >= 0 && classes[ci].field_count < MAX_FIELDS_PER_CLASS) {
+              FieldDef &fd = classes[ci].fields[classes[ci].field_count++];
+              str::ncpy(fd.name, vn, 31);
+              fd.type = is_class_type ? V_OBJECT : ftype;
+            }
+          }
           while (!at(T_SEMI) && !at(T_EOF)) tp++;
           match(T_SEMI);
         } else {
@@ -1907,8 +2067,13 @@ void reset_state() {
   gui_mode = false;
   close_requested = false;
   draw_cx = draw_cy = draw_cw = draw_ch = 0;
-  widget_count = 0;
-  str::memset(widgets, 0, sizeof(widgets));
+  object_count = 0;
+  this_obj_idx = -1;
+  str::memset(objects, 0, sizeof(objects));
+  for (i32 i = 0; i < MAX_OBJECTS; i++) objects[i].class_idx = -1;
+  str::memset(classes, 0, sizeof(classes));
+  class_count = 0;
+  ui_label_n = ui_button_n = ui_textbox_n = ui_checkbox_n = ui_panel_n = 0;
 }
 
 } // anonymous namespace
@@ -1958,7 +2123,7 @@ bool init(const char *source) {
   prescan_classes();
   scan_functions();
   syslog::info("cs", "funcs=%d vars=%d widgets=%d err=%d",
-               func_count, var_count, widget_count, had_error ? 1 : 0);
+               func_count, var_count, object_count, had_error ? 1 : 0);
   if (had_error) { syslog::error("cs", "scan error: %s", gui_out_buf); return false; }
 
   for (i32 i = 0; i < func_count; i++)
@@ -1971,7 +2136,7 @@ bool init(const char *source) {
     tp = main_fn->tok_start;
     exec_block();
     syslog::info("cs", "Main done: vars=%d widgets=%d err=%d",
-                 var_count, widget_count, had_error ? 1 : 0);
+                 var_count, object_count, had_error ? 1 : 0);
     if (had_error) syslog::error("cs", "Main error: %s", gui_out_buf);
     had_return = false; // reset for callbacks
   } else {
@@ -2057,7 +2222,9 @@ void gui_cleanup() {
   close_requested = false;
   var_count = 0;
   func_count = 0;
-  widget_count = 0;
+  object_count = 0;
+  this_obj_idx = -1;
+  ui_label_n = ui_button_n = ui_textbox_n = ui_checkbox_n = ui_panel_n = 0;
 }
 
 } // namespace csharp

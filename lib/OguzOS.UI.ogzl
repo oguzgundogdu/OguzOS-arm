@@ -1,7 +1,94 @@
 // OguzOS.UI — Window framework library
 // Classes that derive from Window are GUI applications.
-// Override OnDraw/OnClick/OnKey/OnArrow in your class.
-// Native widgets: Label, Button, TextBox, CheckBox, Panel
+// Components are backed by native C++ ui:: library (lib/ui.h).
 
 class Window {
+}
+
+class Label {
+    int _h;
+
+    Label(int x, int y, string text) {
+        _h = UI.CreateLabel(x, y, text);
+    }
+
+    void Draw() { UI.Draw(_h); }
+
+    bool HitTest(int mx, int my) {
+        return UI.HitTest(_h, mx, my);
+    }
+
+    void SetText(string t) { UI.SetText(_h, t); }
+    string GetText() { return UI.GetText(_h); }
+    void SetPos(int x, int y) { UI.SetPos(_h, x, y); }
+    void SetColor(int c) { UI.SetColor(_h, c); }
+}
+
+class Button {
+    int _h;
+
+    Button(int x, int y, int w, int h, string text) {
+        _h = UI.CreateButton(x, y, w, h, text);
+    }
+
+    void Draw() { UI.Draw(_h); }
+
+    bool HitTest(int mx, int my) {
+        return UI.HitTest(_h, mx, my);
+    }
+
+    void SetText(string t) { UI.SetText(_h, t); }
+    string GetText() { return UI.GetText(_h); }
+    void SetPos(int x, int y) { UI.SetPos(_h, x, y); }
+}
+
+class CheckBox {
+    int _h;
+
+    CheckBox(int x, int y, string text) {
+        _h = UI.CreateCheckBox(x, y, text);
+    }
+
+    void Draw() { UI.Draw(_h); }
+
+    bool HitTest(int mx, int my) {
+        return UI.HitTest(_h, mx, my);
+    }
+
+    void Toggle() { UI.Toggle(_h); }
+    bool IsChecked() { return UI.IsChecked(_h); }
+    void SetText(string t) { UI.SetText(_h, t); }
+    void SetColor(int c) { UI.SetColor(_h, c); }
+}
+
+class Panel {
+    int _h;
+
+    Panel(int x, int y, int w, int h, int color) {
+        _h = UI.CreatePanel(x, y, w, h, color);
+    }
+
+    void Draw() { UI.Draw(_h); }
+    void SetText(string t) { UI.SetText(_h, t); }
+    void SetPos(int x, int y) { UI.SetPos(_h, x, y); }
+}
+
+class TextBox {
+    int _h;
+
+    TextBox(int x, int y, int w, int h) {
+        _h = UI.CreateTextBox(x, y, w, h);
+    }
+
+    void Draw() { UI.Draw(_h); }
+
+    bool HitTest(int mx, int my) {
+        return UI.HitTest(_h, mx, my);
+    }
+
+    void Click(int mx, int my) { UI.Click(_h, mx); }
+    void Key(int k) { UI.Key(_h, k); }
+    void Focus() { UI.Focus(_h); }
+    string GetText() { return UI.GetText(_h); }
+    void SetText(string t) { UI.SetText(_h, t); }
 }
