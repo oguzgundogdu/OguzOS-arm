@@ -186,6 +186,8 @@ extern "C" void kernel_main() {
   fs::cd("/");
   if (fs::resolve("/bin") < 0)
     fs::mkdir("bin");
+  if (fs::resolve("/lib") < 0)
+    fs::mkdir("lib");
   if (fs::resolve("/home") < 0)
     fs::mkdir("home");
   if (fs::resolve("/home/Desktop") < 0) {
@@ -212,6 +214,12 @@ extern "C" void kernel_main() {
   extern const char _calculator_cs_start[];
   fs::touch("calculator.cs");
   fs::write("calculator.cs", _calculator_cs_start);
+
+  // Install libraries into /lib/
+  fs::cd("/lib");
+  extern const char _ogzlib_ui_start[];
+  fs::touch("OguzOS.UI.ogzl");
+  fs::write("OguzOS.UI.ogzl", _ogzlib_ui_start);
 
   fs::cd("/");
   syslog::info("kernel", "installed %d binaries in /bin", apps::count());

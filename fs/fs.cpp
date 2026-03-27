@@ -142,6 +142,7 @@ void init() {
   mkdir("etc");
   mkdir("tmp");
   mkdir("var");
+  mkdir("lib");
 
   // Create a welcome file
   cd("home");

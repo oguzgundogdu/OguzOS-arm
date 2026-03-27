@@ -1,0 +1,7 @@
+// OguzOS.UI — Window framework library
+// Classes that derive from Window are GUI applications.
+// Override OnDraw/OnClick/OnKey/OnArrow in your class.
+// Native widgets: Label, Button, TextBox, CheckBox, Panel
+
+class Window {
+}

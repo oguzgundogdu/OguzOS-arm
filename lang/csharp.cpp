@@ -1,4 +1,5 @@
 #include "csharp.h"
+#include "fs.h"
 #include "graphics.h"
 #include "string.h"
 #include "syslog.h"
@@ -7,7 +8,7 @@
 namespace {
 
 // ── Limits ──────────────────────────────────────────────────────────────────
-constexpr i32 MAX_TOKENS = 4096;
+constexpr i32 MAX_TOKENS = 8192;
 constexpr i32 MAX_VARS = 64;
 constexpr i32 MAX_FUNCS = 16;
 constexpr i32 MAX_CALL = 16;
@@ -112,6 +113,117 @@ i32 call_depth;
 bool gui_mode = false;
 bool close_requested = false;
 i32 draw_cx, draw_cy, draw_cw, draw_ch; // current draw context
+
+// ── Library system (.ogzl) ──────────────────────────────────────────────────
+constexpr i32 MERGED_MAX = 16384;
+char merged_buf[MERGED_MAX];
+
+constexpr i32 MAX_LIBS = 4;
+char loaded_libs[MAX_LIBS][64];
+i32 loaded_lib_count;
+
+// Resolve "using LibName;" → load /lib/LibName.ogzl and prepend to source
+bool resolve_usings() {
+  loaded_lib_count = 0;
+  const char *orig = src;
+  i32 out_pos = 0;
+  bool any_lib = false;
+
+  // Scan source for "using X;" lines
+  const char *p = orig;
+  while (*p) {
+    // Skip leading whitespace
+    while (*p == ' ' || *p == '\t') p++;
+
+    // Check for "using "
+    if (p[0] == 'u' && p[1] == 's' && p[2] == 'i' && p[3] == 'n' && p[4] == 'g' && p[5] == ' ') {
+      const char *name_start = p + 6;
+      // Skip whitespace after "using"
+      while (*name_start == ' ' || *name_start == '\t') name_start++;
+      // Find the semicolon
+      const char *name_end = name_start;
+      while (*name_end && *name_end != ';' && *name_end != '\n') name_end++;
+
+      if (*name_end == ';') {
+        // Extract namespace name
+        char lib_name[64];
+        i32 nlen = static_cast<i32>(name_end - name_start);
+        if (nlen > 63) nlen = 63;
+        for (i32 i = 0; i < nlen; i++) lib_name[i] = name_start[i];
+        lib_name[nlen] = '\0';
+
+        // Skip built-in namespaces (System, System.*)
+        bool is_builtin = (str::cmp(lib_name, "System") == 0) ||
+                          (nlen > 7 && lib_name[0] == 'S' && lib_name[1] == 'y' &&
+                           lib_name[2] == 's' && lib_name[3] == 't' && lib_name[4] == 'e' &&
+                           lib_name[5] == 'm' && lib_name[6] == '.');
+
+        if (!is_builtin) {
+          // Check if already loaded
+          bool already = false;
+          for (i32 i = 0; i < loaded_lib_count; i++) {
+            if (str::cmp(loaded_libs[i], lib_name) == 0) { already = true; break; }
+          }
+
+          if (!already && loaded_lib_count < MAX_LIBS) {
+            // Build path: /lib/<name>.ogzl
+            char path[96];
+            str::cpy(path, "/lib/");
+            str::cat(path, lib_name);
+            str::cat(path, ".ogzl");
+
+            i32 idx = fs::resolve(path);
+            if (idx < 0) {
+              // Library not found — report error
+              had_error = true;
+              str::cpy(merged_buf, "Library not found: ");
+              str::cat(merged_buf, path);
+              out = merged_buf;
+              out_cap = MERGED_MAX;
+              out_len = static_cast<i32>(str::len(merged_buf));
+              return false;
+            }
+
+            const fs::Node *node = fs::get_node(idx);
+            if (node && node->content[0]) {
+              i32 lib_len = static_cast<i32>(str::len(node->content));
+              if (out_pos + lib_len + 2 >= MERGED_MAX) {
+                had_error = true;
+                return false;
+              }
+              str::memcpy(merged_buf + out_pos, node->content, lib_len);
+              out_pos += lib_len;
+              merged_buf[out_pos++] = '\n';
+              any_lib = true;
+            }
+
+            str::ncpy(loaded_libs[loaded_lib_count], lib_name, 63);
+            loaded_lib_count++;
+          }
+        }
+      }
+    }
+
+    // Advance to next line
+    while (*p && *p != '\n') p++;
+    if (*p == '\n') p++;
+  }
+
+  if (any_lib) {
+    // Append original source after library code
+    i32 orig_len = static_cast<i32>(str::len(orig));
+    if (out_pos + orig_len + 1 >= MERGED_MAX) {
+      had_error = true;
+      return false;
+    }
+    str::memcpy(merged_buf + out_pos, orig, orig_len);
+    out_pos += orig_len;
+    merged_buf[out_pos] = '\0';
+    src = merged_buf;
+  }
+
+  return true;
+}
 
 void gfx_line(i32 x1, i32 y1, i32 x2, i32 y2, u32 color) {
   i32 dx = x2 - x1; if (dx < 0) dx = -dx;
@@ -1812,6 +1924,7 @@ bool run(const char *source, char *out_buf, i32 out_size) {
   out_len = 0;
   out[0] = '\0';
 
+  if (!resolve_usings()) return false;
   if (!tokenize()) return false;
   prescan_classes();
   scan_functions();
@@ -1838,6 +1951,7 @@ bool init(const char *source) {
   out_len = 0;
   out[0] = '\0';
 
+  if (!resolve_usings()) { syslog::error("cs", "library resolve failed"); return false; }
   if (!tokenize()) { syslog::error("cs", "tokenize failed"); return false; }
   syslog::info("cs", "tokens=%d", tok_count);
 

@@ -384,7 +384,7 @@ void add_file_to_sln(CSharpState *s, const char *filename) {
     usize cl = str::len(cname);
     if (cl > 3 && str::cmp(cname + cl - 3, ".cs") == 0) cname[cl - 3] = '\0';
     char tmpl[256];
-    str::cpy(tmpl, "using System;\n\nclass ");
+    str::cpy(tmpl, "using System;\nusing OguzOS.UI;\n\nclass ");
     str::cat(tmpl, cname);
     if (s->sln.type == 1) {
       str::cat(tmpl, " : Window {\n    static void Main() {\n    }\n\n"
@@ -442,7 +442,7 @@ void create_solution(CSharpState *s, const char *name, i32 type) {
   fs::touch(main_name);
   if (type == 1) {
     fs::write(main_name,
-      "using System;\n\nclass MyApp : Window {\n"
+      "using System;\nusing OguzOS.UI;\n\nclass MyApp : Window {\n"
       "    static Button btn;\n    static Label lbl;\n"
       "    static TextBox txt;\n    static CheckBox chk;\n\n"
       "    static void Main() {\n"
@@ -944,7 +944,7 @@ const char *TPL_CONSOLE =
   "        }\n    }\n}\n";
 
 const char *TPL_WINDOW =
-  "using System;\n\nclass MyApp : Window {\n"
+  "using System;\nusing OguzOS.UI;\n\nclass MyApp : Window {\n"
   "    static Button btn;\n    static Label lbl;\n"
   "    static TextBox txt;\n    static CheckBox chk;\n\n"
   "    static void Main() {\n"

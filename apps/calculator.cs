@@ -1,4 +1,5 @@
 using System;
+using OguzOS.UI;
 class Calc : Window {
     static string display;
     static string op1;

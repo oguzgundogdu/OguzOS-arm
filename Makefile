@@ -104,6 +104,7 @@ OBJS = $(BUILD_DIR)/boot.o \
        $(BUILD_DIR)/commands.o \
        $(BUILD_DIR)/shell.o \
        $(BUILD_DIR)/calculator_embed.o \
+       $(BUILD_DIR)/ogzlib_embed.o \
        $(BUILD_DIR)/kernel.o
 
 TARGET = oguzos
@@ -234,6 +235,9 @@ $(BUILD_DIR)/csgui.o: $(APPS_DIR)/csgui.ogz.cpp | $(BUILD_DIR)
 	$(CXX) $(USERFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/calculator_embed.o: $(APPS_DIR)/calculator_embed.S $(APPS_DIR)/calculator.cs | $(BUILD_DIR)
+	$(AS) $(ASFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/ogzlib_embed.o: $(LIB_DIR)/ogzlib_embed.S $(LIB_DIR)/OguzOS.UI.ogzl | $(BUILD_DIR)
 	$(AS) $(ASFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/kernel.o: $(KERNEL_DIR)/kernel.cpp | $(BUILD_DIR)
