@@ -3,6 +3,10 @@
 #include "string.h"
 #include "uart.h"
 
+// Embedded filesystem content (from .incbin assembly files)
+extern "C" const char _ogzlib_ui_start[];
+extern "C" const char _calculator_cs_start[];
+
 namespace {
 
 fs::Node nodes[fs::MAX_NODES];
@@ -164,6 +168,18 @@ void init() {
   write("hostname", "oguzos");
   touch("version");
   write("version", "1.0.0-arm64");
+  cd("/");
+
+  // Install default libraries
+  cd("lib");
+  touch("OguzOS.UI.ogzl");
+  write("OguzOS.UI.ogzl", _ogzlib_ui_start);
+  cd("/");
+
+  // Install bundled C# apps
+  cd("bin");
+  touch("calculator.cs");
+  write("calculator.cs", _calculator_cs_start);
   cd("/");
 }
 

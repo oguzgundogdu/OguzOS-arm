@@ -14,6 +14,9 @@ namespace apps {
 
 constexpr i32 MAX_APPS = 16;
 
+// Initialize all apps, /bin/ descriptors, file associations, and start menu
+void init();
+
 // Register an app (called at init time by each app module)
 void register_app(const OgzApp *app);
 

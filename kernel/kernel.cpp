@@ -1,7 +1,5 @@
-#include "assoc.h"
 #include "disk.h"
 #include "env.h"
-#include "menu.h"
 #include "fb.h"
 #include "fs.h"
 #include "gui.h"
@@ -13,20 +11,8 @@
 #include "registry.h"
 #include "settings.h"
 #include "shell.h"
-#include "string.h"
 #include "syslog.h"
 #include "uart.h"
-
-// App registration (defined in apps/*.ogz.cpp)
-namespace apps {
-void register_notepad();
-void register_terminal();
-void register_taskman();
-void register_settings();
-void register_browser();
-void register_csharp();
-void register_csgui();
-}
 
 namespace {
 
@@ -151,99 +137,11 @@ extern "C" void kernel_main() {
   // Initialize environment variables
   env::init();
 
-  // Initialize file associations (load saved or set defaults)
-  assoc::init();
-  assoc::load();
-  if (assoc::count() == 0) {
-    assoc::set(".txt", "notepad.ogz");
-    assoc::set(".md", "notepad.ogz");
-    assoc::set(".log", "notepad.ogz");
-    assoc::set(".cfg", "notepad.ogz");
-    assoc::set(".conf", "notepad.ogz");
-    assoc::set(".csv", "notepad.ogz");
-    assoc::set(".sh", "notepad.ogz");
-    assoc::set(".json", "notepad.ogz");
-    assoc::set(".cs", "csharp.ogz");
-    assoc::set(".sln", "csharp.ogz");
-    assoc::save();
-    syslog::info("kernel", "created default /etc/filetypes");
-  }
-
   // Enable file logging now that fs is ready
   syslog::init();
 
-  // Register .ogz apps
-  apps::register_notepad();
-  apps::register_terminal();
-  apps::register_taskman();
-  apps::register_settings();
-  apps::register_browser();
-  apps::register_csharp();
-  apps::register_csgui();
-  syslog::info("kernel", "registered %d apps", apps::count());
-
-  // Ensure key directories exist (even on disk-restored FS)
-  fs::cd("/");
-  if (fs::resolve("/bin") < 0)
-    fs::mkdir("bin");
-  if (fs::resolve("/lib") < 0)
-    fs::mkdir("lib");
-  if (fs::resolve("/home") < 0)
-    fs::mkdir("home");
-  if (fs::resolve("/home/Desktop") < 0) {
-    fs::cd("/home");
-    fs::mkdir("Desktop");
-    fs::cd("/");
-  }
-  fs::cd("/bin");
-  for (i32 i = 0; i < apps::count(); i++) {
-    const OgzApp *app = apps::get(i);
-    if (!app)
-      continue;
-    fs::touch(app->id);
-    char desc[256];
-    str::cpy(desc, "#!/ogz\n");
-    str::cat(desc, "name=");
-    str::cat(desc, app->name);
-    str::cat(desc, "\nid=");
-    str::cat(desc, app->id);
-    str::cat(desc, "\ntype=application\n");
-    fs::write(app->id, desc);
-  }
-  // Install embedded C# apps into /bin/ (source from apps/calculator.cs)
-  extern const char _calculator_cs_start[];
-  fs::touch("calculator.cs");
-  fs::write("calculator.cs", _calculator_cs_start);
-
-  // Install libraries into /lib/
-  fs::cd("/lib");
-  extern const char _ogzlib_ui_start[];
-  fs::touch("OguzOS.UI.ogzl");
-  fs::write("OguzOS.UI.ogzl", _ogzlib_ui_start);
-
-  fs::cd("/");
-  syslog::info("kernel", "installed %d binaries in /bin", apps::count());
-
-  // Initialize start menu (load saved or build default)
-  menu::init();
-  menu::load();
-  if (menu::count() == 0) {
-    // Pin all registered apps
-    for (i32 i = 0; i < apps::count(); i++) {
-      const OgzApp *app = apps::get(i);
-      if (app)
-        menu::add(menu::ENTRY_APP, app->name, app->id);
-    }
-    menu::add(menu::ENTRY_APP, "Calculator", "calculator.cs");
-    menu::add(menu::ENTRY_SEP, "---", "");
-    menu::add(menu::ENTRY_EXPLORER, "File Explorer", "");
-    menu::add(menu::ENTRY_ABOUT, "About OguzOS", "");
-    menu::add(menu::ENTRY_SEP, "---", "");
-    menu::add(menu::ENTRY_RESTART, "Restart", "");
-    menu::add(menu::ENTRY_SHUTDOWN, "Shutdown", "");
-    menu::save();
-    syslog::info("kernel", "created default /etc/menu");
-  }
+  // Initialize user-level subsystems (apps, /bin, associations, menu)
+  apps::init();
 
   // Print welcome banner
   print_banner();
