@@ -276,6 +276,27 @@ namespace ucsharp {
     inline const char* get_error()  { return (const char*)_svc0(SYS_CS_GET_ERROR); }
     inline void gui_cleanup()       { _svc0(SYS_CS_GUI_CLEANUP); }
     inline bool has_func(const char *n) { return _svc1(SYS_CS_HAS_FUNC, (u64)n) != 0; }
+    inline bool is_window_app(const char *source) {
+        const char *p = source;
+        while (*p) {
+            if (p[0]=='c' && p[1]=='l' && p[2]=='a' && p[3]=='s' && p[4]=='s' &&
+                (p[5]==' ' || p[5]=='\t')) {
+                p += 5;
+                while (*p==' ' || *p=='\t') p++;
+                while (*p && *p!=' ' && *p!='\t' && *p!=':' && *p!='{' && *p!='\n') p++;
+                while (*p==' ' || *p=='\t') p++;
+                if (*p==':') {
+                    p++;
+                    while (*p==' ' || *p=='\t') p++;
+                    if (p[0]=='W' && p[1]=='i' && p[2]=='n' && p[3]=='d' && p[4]=='o' && p[5]=='w' &&
+                        (p[6]==' ' || p[6]=='\t' || p[6]=='{' || p[6]=='\n' || p[6]=='\r' || p[6]=='\0'))
+                        return true;
+                }
+            }
+            p++;
+        }
+        return false;
+    }
     inline void set_draw_ctx(i32 cx, i32 cy, i32 cw, i32 ch)
         { _svc4(SYS_CS_SET_DRAW_CTX, (u64)cx, (u64)cy, (u64)cw, (u64)ch); }
 }

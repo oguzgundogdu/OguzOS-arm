@@ -377,12 +377,8 @@ void add_file_to_sln(CSharpState *s, const char *filename) {
   char old[256]; fs::get_cwd(old, sizeof(old));
   fs::cd(s->sln.dir);
   fs::touch(filename);
-  // Write a basic template
-  if (ends_with(filename, ".csg")) {
-    fs::write(filename, "using System;\n\nclass NewApp {\n    static void Main() {\n    }\n\n"
-              "    static void OnDraw(int w, int h) {\n        Gfx.Clear(0xF0F0F0);\n    }\n}\n");
-  } else {
-    // Extract class name from filename (strip .cs extension)
+  // Write a basic template — detect GUI solution by type
+  {
     char cname[64];
     str::ncpy(cname, filename, 63);
     usize cl = str::len(cname);
@@ -390,7 +386,12 @@ void add_file_to_sln(CSharpState *s, const char *filename) {
     char tmpl[256];
     str::cpy(tmpl, "using System;\n\nclass ");
     str::cat(tmpl, cname);
-    str::cat(tmpl, " {\n    public void Run() {\n    }\n}\n");
+    if (s->sln.type == 1) {
+      str::cat(tmpl, " : Window {\n    static void Main() {\n    }\n\n"
+                "    static void OnDraw(int w, int h) {\n        Gfx.Clear(0xF0F0F0);\n    }\n}\n");
+    } else {
+      str::cat(tmpl, " {\n    public void Run() {\n    }\n}\n");
+    }
     fs::write(filename, tmpl);
   }
   fs::sync_to_disk();
@@ -437,11 +438,11 @@ void create_solution(CSharpState *s, const char *name, i32 type) {
   fs::cd(name);
 
   // Create main file
-  const char *main_name = (type == 1) ? "Program.csg" : "Program.cs";
+  const char *main_name = "Program.cs";
   fs::touch(main_name);
   if (type == 1) {
     fs::write(main_name,
-      "using System;\n\nclass MyApp {\n"
+      "using System;\n\nclass MyApp : Window {\n"
       "    static Button btn;\n    static Label lbl;\n"
       "    static TextBox txt;\n    static CheckBox chk;\n\n"
       "    static void Main() {\n"
@@ -943,7 +944,7 @@ const char *TPL_CONSOLE =
   "        }\n    }\n}\n";
 
 const char *TPL_WINDOW =
-  "using System;\n\nclass MyApp {\n"
+  "using System;\n\nclass MyApp : Window {\n"
   "    static Button btn;\n    static Label lbl;\n"
   "    static TextBox txt;\n    static CheckBox chk;\n\n"
   "    static void Main() {\n"
@@ -972,7 +973,7 @@ const char *TPL_WINDOW =
   "    }\n}\n";
 
 constexpr i32 TPL_COUNT = 3;
-const char *TPL_NAMES[] = {"Console App (.cs)", "Window App (.csg)", "Solution (.sln)"};
+const char *TPL_NAMES[] = {"Console App (.cs)", "Window App (.cs)", "Solution (.sln)"};
 const char *TPL_DESCS[] = {
   "Command-line program with\nConsole.WriteLine output.\nRun with F5.",
   "GUI application with windows,\nbuttons, labels, and text input.\nRun with F6.",
@@ -1020,7 +1021,8 @@ void draw_sln_panel(CSharpState *s, i32 px, i32 py, i32 pw, i32 ph) {
 
     // File icon (small C# icon)
     u32 icon_col = COL_SLN_FILE;
-    if (ends_with(s->sln.files[i].name, ".csg")) icon_col = COL_SLN_ADD;
+    // Highlight the entry file for GUI solutions
+    if (s->sln.type == 1 && i == 0) icon_col = COL_SLN_ADD;
     gfx::fill_rect(px + 14, y + 2, 8, 10, icon_col);
     gfx::draw_char(px + 15, y + 1, 'C', 0x00FFFFFF, icon_col);
 
@@ -1589,20 +1591,15 @@ bool csharp_key(u8 *state, char key) {
     const char *run_src = s->src; // default: current buffer
 
     if (s->sln.active) {
-      gui_mode = (s->sln.type == 1);
-
-      // Find the entry file index
-      const char *ext = gui_mode ? ".csg" : ".cs";
+      // Find the entry file index (first .cs file)
       i32 entry_idx = -1;
       for (i32 i = 0; i < s->sln.file_count; i++) {
-        if (ends_with(s->sln.files[i].name, ext)) { entry_idx = i; break; }
+        if (ends_with(s->sln.files[i].name, ".cs")) { entry_idx = i; break; }
       }
       if (entry_idx < 0) {
         s->has_output = true;
         s->ran_ok = false;
-        str::cpy(s->output, "Error: no ");
-        str::cat(s->output, ext);
-        str::cat(s->output, " entry file in solution.\n");
+        str::cpy(s->output, "Error: no .cs entry file in solution.\n");
         s->out_scroll = 0;
         return true;
       }
@@ -1638,8 +1635,9 @@ bool csharp_key(u8 *state, char key) {
 
       fs::cd(old);
       run_src = merged_src;
+      gui_mode = csharp::is_window_app(run_src);
     } else if (s->filepath[0]) {
-      gui_mode = ends_with(s->filepath, ".csg");
+      gui_mode = csharp::is_window_app(s->src);
     }
 
     if (gui_mode) {
@@ -1652,38 +1650,33 @@ bool csharp_key(u8 *state, char key) {
         csharp::run(run_src, s->output, OUT_MAX);
         s->out_scroll = 0;
       } else {
-        // Build the .csg path for launching
+        // Build the .cs path for launching
         char gui_path[128];
         if (s->sln.active) {
           str::cpy(gui_path, s->sln.dir);
           str::cat(gui_path, "/");
-          // Find the .csg entry filename
+          // Find the .cs entry filename
           for (i32 i = 0; i < s->sln.file_count; i++) {
-            if (ends_with(s->sln.files[i].name, ".csg")) {
+            if (ends_with(s->sln.files[i].name, ".cs")) {
               str::cat(gui_path, s->sln.files[i].name);
               break;
             }
           }
         } else if (s->filepath[0]) {
           str::ncpy(gui_path, s->filepath, 127);
-          usize pl = str::len(gui_path);
-          if (pl > 3 && str::cmp(gui_path + pl - 3, ".cs") == 0) {
-            gui_path[pl] = 'g';
-            gui_path[pl + 1] = '\0';
-          }
         } else {
-          str::cpy(gui_path, "/tmp/app.csg");
+          str::cpy(gui_path, "/tmp/app.cs");
         }
         // Save source so csgui host can read it.
         // For solutions, write merged source to a temp file so we don't
-        // corrupt the original .csg entry file with baked-in library code.
+        // corrupt the original entry file with baked-in library code.
         const char *launch_path = gui_path;
         if (s->sln.active) {
           fs::cd("/tmp");
-          fs::touch("_sln_run.csg");
-          fs::write("_sln_run.csg", run_src);
+          fs::touch("_sln_run.cs");
+          fs::write("_sln_run.cs", run_src);
           fs::sync_to_disk();
-          launch_path = "/tmp/_sln_run.csg";
+          launch_path = "/tmp/_sln_run.cs";
         } else {
           char gdir[128], gname[64];
           split_path(gui_path, gdir, sizeof(gdir), gname, sizeof(gname));

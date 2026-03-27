@@ -164,7 +164,6 @@ extern "C" void kernel_main() {
     assoc::set(".sh", "notepad.ogz");
     assoc::set(".json", "notepad.ogz");
     assoc::set(".cs", "csharp.ogz");
-    assoc::set(".csg", "csgui.ogz");
     assoc::set(".sln", "csharp.ogz");
     assoc::save();
     syslog::info("kernel", "created default /etc/filetypes");
@@ -209,10 +208,10 @@ extern "C" void kernel_main() {
     str::cat(desc, "\ntype=application\n");
     fs::write(app->id, desc);
   }
-  // Install C# .ogz apps into /bin/ (source embedded from apps/calculator.csg)
-  extern const char _calculator_csg_start[];
-  fs::touch("calculator.ogz");
-  fs::write("calculator.ogz", _calculator_csg_start);
+  // Install embedded C# apps into /bin/ (source from apps/calculator.cs)
+  extern const char _calculator_cs_start[];
+  fs::touch("calculator.cs");
+  fs::write("calculator.cs", _calculator_cs_start);
 
   fs::cd("/");
   syslog::info("kernel", "installed %d binaries in /bin", apps::count());
@@ -227,7 +226,7 @@ extern "C" void kernel_main() {
       if (app)
         menu::add(menu::ENTRY_APP, app->name, app->id);
     }
-    menu::add(menu::ENTRY_APP, "Calculator", "calculator.ogz");
+    menu::add(menu::ENTRY_APP, "Calculator", "calculator.cs");
     menu::add(menu::ENTRY_SEP, "---", "");
     menu::add(menu::ENTRY_EXPLORER, "File Explorer", "");
     menu::add(menu::ENTRY_ABOUT, "About OguzOS", "");

@@ -12,6 +12,7 @@
 #include "fs.h"
 #include "graphics.h"
 #include "gui.h"
+#include "csharp.h"
 #include "menu.h"
 #include "net.h"
 #include "netdev.h"
@@ -787,14 +788,12 @@ void terminal_open_file(u8 *state, const char *path, const char *content) {
   // Check if this is a .cs file → auto-run with csrun
   if (path) {
     usize plen = str::len(path);
-    // .csg files → launch as GUI app
-    if (plen > 4 && str::cmp(path + plen - 4, ".csg") == 0) {
-      // Open as GUI app via file association
-      gui::open_file(path, content);
-      return;
-    }
-    // .cs files → run as console app
+    // .cs files → Window apps launch as GUI, console apps run inline
     if (plen > 3 && str::cmp(path + plen - 3, ".cs") == 0) {
+      if (content && csharp::is_window_app(content)) {
+        gui::open_file(path, content);
+        return;
+      }
       str::cpy(s->cmd, "csrun ");
       str::ncpy(s->cmd + 6, path, 193);
       s->cmd_len = static_cast<i32>(str::len(s->cmd));

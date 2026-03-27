@@ -24,6 +24,9 @@ bool run(const char *source, char *out_buf, i32 out_size);
 // Initialize: tokenize, find functions, execute Main() if present for init
 bool init(const char *source);
 
+// Check if source contains a class deriving from Window (GUI app)
+bool is_window_app(const char *source);
+
 // Check if a function exists (e.g. "OnDraw", "OnClick")
 bool has_func(const char *name);
 

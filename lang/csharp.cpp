@@ -29,7 +29,7 @@ enum Tok : u8 {
   // Punctuation
   T_LPAREN, T_RPAREN, T_LBRACE, T_RBRACE,
   T_LBRACKET, T_RBRACKET,
-  T_SEMI, T_COMMA, T_DOT,
+  T_SEMI, T_COMMA, T_DOT, T_COLON,
 };
 
 struct Token {
@@ -95,6 +95,7 @@ i32 func_count;
 // ── Class name registry (populated by pre-scan) ────────────────────────────
 constexpr i32 MAX_CLASSES = 8;
 char class_names[MAX_CLASSES][32];
+bool class_is_window[MAX_CLASSES]; // true if class derives from Window
 i32 class_count;
 
 char *out;
@@ -307,6 +308,18 @@ void prescan_classes() {
       if (len > 31) len = 31;
       for (i32 j = 0; j < len; j++) class_names[class_count][j] = src[t.pos + j];
       class_names[class_count][len] = '\0';
+      // Check for ": Window" inheritance
+      class_is_window[class_count] = false;
+      if (i + 2 < tok_count && tokens[i + 2].type == T_COLON &&
+          i + 3 < tok_count && tokens[i + 3].type == T_IDENT) {
+        char base[32];
+        i32 bl = tokens[i + 3].len;
+        if (bl > 31) bl = 31;
+        for (i32 j = 0; j < bl; j++) base[j] = src[tokens[i + 3].pos + j];
+        base[bl] = '\0';
+        if (str::cmp(base, "Window") == 0)
+          class_is_window[class_count] = true;
+      }
       class_count++;
     }
   }
@@ -507,6 +520,7 @@ bool tokenize() {
     case ';': add_tok(T_SEMI, i, 1); break;
     case ',': add_tok(T_COMMA, i, 1); break;
     case '.': add_tok(T_DOT, i, 1); break;
+    case ':': add_tok(T_COLON, i, 1); break;
     default:
       error("unexpected character");
       return false;
@@ -1565,11 +1579,15 @@ void scan_functions() {
     // Skip namespace closing brace
     if (match(T_RBRACE)) continue;
 
-    // class Name {
+    // class Name { ... } or class Name : Base { ... }
     if (match(T_CLASS)) {
       char cur_class[32];
       tok_text(cur(), cur_class, 32);
       tp++; // skip class name
+      // Skip optional ": BaseClass"
+      if (match(T_COLON)) {
+        tp++; // skip base class name
+      }
       expect(T_LBRACE);
 
       // Methods inside class
@@ -1847,6 +1865,36 @@ bool init(const char *source) {
   }
 
   return !had_error;
+}
+
+bool is_window_app(const char *source) {
+  // Scan source text for "class <Name> : Window" pattern
+  const char *p = source;
+  while (*p) {
+    // Look for "class" keyword
+    if (p[0] == 'c' && p[1] == 'l' && p[2] == 'a' && p[3] == 's' && p[4] == 's' &&
+        (p[5] == ' ' || p[5] == '\t')) {
+      p += 5;
+      // Skip whitespace
+      while (*p == ' ' || *p == '\t') p++;
+      // Skip class name
+      while (*p && *p != ' ' && *p != '\t' && *p != ':' && *p != '{' && *p != '\n') p++;
+      // Skip whitespace
+      while (*p == ' ' || *p == '\t') p++;
+      // Check for ':'
+      if (*p == ':') {
+        p++;
+        // Skip whitespace
+        while (*p == ' ' || *p == '\t') p++;
+        // Check for "Window"
+        if (p[0] == 'W' && p[1] == 'i' && p[2] == 'n' && p[3] == 'd' && p[4] == 'o' && p[5] == 'w' &&
+            (p[6] == ' ' || p[6] == '\t' || p[6] == '{' || p[6] == '\n' || p[6] == '\r' || p[6] == '\0'))
+          return true;
+      }
+    }
+    p++;
+  }
+  return false;
 }
 
 bool has_func(const char *name) {

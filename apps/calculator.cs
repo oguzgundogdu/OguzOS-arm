@@ -1,5 +1,5 @@
 using System;
-class Calc {
+class Calc : Window {
     static string display;
     static string op1;
     static string op;
