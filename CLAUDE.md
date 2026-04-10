@@ -103,8 +103,8 @@ Object files are listed explicitly in the Makefile `OBJS` list (not auto-discove
 - `drivers/net.cpp` → `build/netdev.o` (namespace `netdev`, header: `drivers/netdev.h`)
 - `net/net.cpp` → `build/netstack.o` (namespace `net`, header: `net/net.h`)
 - `apps/settings.ogz.cpp` → `build/settingsapp.o` (avoids collision with `lib/settings.cpp` → `build/settings.o`)
-- `lang/csharp.cpp` → `build/csharp_interp.o` (namespace `csharp`, header: `lang/csharp.h`)
-- `apps/csharp.ogz.cpp` → `build/csharp_ide.o` (avoids collision with `lang/csharp.cpp`)
+- `lang/csoz.cpp` → `build/csoz_interp.o` (namespace `csoz`, header: `lang/csoz.h`)
+- `apps/csoz.ogz.cpp` → `build/csoz_ide.o` (avoids collision with `lang/csoz.cpp`)
 
 When adding a new `.cpp` file: add a build rule in the Makefile following the existing pattern and append the new `.o` to the `OBJS` list.
 
@@ -137,18 +137,18 @@ Apps use the `.ogz.cpp` naming convention and follow a function-pointer interfac
 3. Add dispatch to `apps/terminal.ogz.cpp` `term_exec()` (GUI terminal) — for commands that call UART-printing functions (like `net::ping()`), wrap with `uart::capture_start/stop`
 4. Update help text in both places
 
-## C# Interpreter and Widget System
+## CSOZ — C# Interpreter and Widget System
 
-The `lang/` directory contains a mini C# interpreter (`csharp::` namespace) with two execution modes:
+The `lang/` directory contains the CSOZ interpreter (`csoz::` namespace) — a mini C# runtime for OguzOS with two execution modes:
 
-- **Console mode**: `csharp::run(source, out_buf, out_size)` — executes code, captures output to buffer. Built-in: `Console.WriteLine/Write`.
-- **GUI mode**: `csharp::init(source)` then per-frame `call_draw()`, `call_click(x,y)`, `call_key(key)`, `call_arrow(dir)` — for interactive programs. Built-in: `Gfx.Clear/FillRect/Rect/DrawText/Pixel/Line`, `App.Close/Width/Height`.
+- **Console mode**: `csoz::run(source, out_buf, out_size)` — executes code, captures output to buffer. Built-in: `Console.WriteLine/Write`.
+- **GUI mode**: `csoz::init(source)` then per-frame `call_draw()`, `call_click(x,y)`, `call_key(key)`, `call_arrow(dir)`, `call_mouse_down(x,y)`, `call_mouse_move(x,y)` — for interactive programs. Built-in: `Gfx.Clear/FillRect/Rect/DrawText/Pixel/Line/HLine`, `Canvas.Create/Clear/SetPixel/Line/FillRect/Rect/Brush/Draw`, `App.Close/Width/Height`.
 
 **Widget system** (GUI mode only): 5 widget types — `Label`, `Button`, `TextBox`, `CheckBox`, `Panel`. Max 16 widgets per program. Created with C# `new` syntax (e.g., `Button btn = new Button(x, y, w, h);`). Widgets support `.Text`, `.Clicked`, `.GetText()`, `.SetText()`, `.SetChecked()`.
 
-Two apps use this: `csharp.ogz.cpp` (C# IDE with syntax highlighting, templates, solution explorer) and `csgui.ogz.cpp` (GUI host for running .csg programs with `OnDraw`/`OnClick`/`OnKey`/`OnArrow` callbacks).
+Two apps use this: `csoz.ogz.cpp` (CSOZ IDE with syntax highlighting, templates, solution explorer) and `csgui.ogz.cpp` (GUI host for running .csg programs with `OnDraw`/`OnClick`/`OnKey`/`OnArrow`/`OnMouseDown`/`OnMouseMove` callbacks).
 
-**Solution system** (`.sln` files): The C# IDE supports multi-file projects via a simple line-based `.sln` format:
+**Solution system** (`.sln` files): The CSOZ IDE supports multi-file projects via a simple line-based `.sln` format:
 ```
 #OguzSln v1
 Name=MyProject
@@ -161,7 +161,7 @@ File=Utils.cs
 - Ctrl+N adds a new file, "- Remove File" button removes the active file
 - Switching files auto-saves the current file to the filesystem
 - Template chooser offers "Solution (.sln)" as a third project type
-- `.sln` files are associated with `csharp.ogz` via `assoc::`
+- `.sln` files are associated with `csoz.ogz` via `assoc::`
 
 ## EL0 User-Mode Execution
 
@@ -181,7 +181,7 @@ The OS supports running app code at EL0 (user privilege level) via the `arch/` s
 - Factory functions: `ui::make_label()`, `ui::make_button()`, `ui::make_textbox()`, `ui::make_checkbox()`, `ui::make_panel()`
 - Text fields are 56 chars max
 
-This is separate from the C# widget system in `lang/csharp.cpp` — the native UI library is for `.ogz` apps written in C++.
+This is separate from the CSOZ widget system in `lang/csoz.cpp` — the native UI library is for `.ogz` apps written in C++.
 
 ## Graphics Primitives
 

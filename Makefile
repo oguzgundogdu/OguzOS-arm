@@ -94,8 +94,8 @@ OBJS = $(BUILD_DIR)/boot.o \
        $(BUILD_DIR)/taskman.o \
        $(BUILD_DIR)/settingsapp.o \
        $(BUILD_DIR)/browser.o \
-       $(BUILD_DIR)/csharp_interp.o \
-       $(BUILD_DIR)/csharp_ide.o \
+       $(BUILD_DIR)/csoz_interp.o \
+       $(BUILD_DIR)/csoz_ide.o \
        $(BUILD_DIR)/csgui.o \
        $(BUILD_DIR)/settings.o \
        $(BUILD_DIR)/env.o \
@@ -234,10 +234,10 @@ $(BUILD_DIR)/commands.o: $(SHELL_DIR)/commands.cpp | $(BUILD_DIR)
 $(BUILD_DIR)/shell.o: $(SHELL_DIR)/shell.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/csharp_interp.o: $(LANG_DIR)/csharp.cpp | $(BUILD_DIR)
+$(BUILD_DIR)/csoz_interp.o: $(LANG_DIR)/csoz.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/csharp_ide.o: $(APPS_DIR)/csharp.ogz.cpp | $(BUILD_DIR)
+$(BUILD_DIR)/csoz_ide.o: $(APPS_DIR)/csoz.ogz.cpp | $(BUILD_DIR)
 	$(CXX) $(USERFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/csgui.o: $(APPS_DIR)/csgui.ogz.cpp | $(BUILD_DIR)

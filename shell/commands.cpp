@@ -1,5 +1,5 @@
 #include "commands.h"
-#include "csharp.h"
+#include "csoz.h"
 #include "disk.h"
 #include "gui.h"
 #include "env.h"
@@ -528,7 +528,7 @@ void csrun(OutFn out, void *ctx, const char *filepath) {
 
   // Run the interpreter
   char output[1024];
-  bool ok = csharp::run(node->content, output, 1024);
+  bool ok = csoz::run(node->content, output, 1024);
 
   // Print output
   if (output[0])

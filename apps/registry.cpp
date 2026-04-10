@@ -12,8 +12,7 @@ void register_terminal();
 void register_taskman();
 void register_settings();
 void register_browser();
-void register_csharp();
-void register_csgui();
+void register_csoz();
 }
 
 namespace {
@@ -53,8 +52,7 @@ void init() {
   register_taskman();
   register_settings();
   register_browser();
-  register_csharp();
-  register_csgui();
+  register_csoz();
   syslog::info("apps", "registered %d apps", app_count);
 
   // ── Ensure key directories exist (even on disk-restored FS) ───────────
@@ -98,16 +96,34 @@ void init() {
     assoc::set(".csv", "notepad.ogz");
     assoc::set(".sh",  "notepad.ogz");
     assoc::set(".json","notepad.ogz");
-    assoc::set(".cs",  "csharp.ogz");
-    assoc::set(".sln", "csharp.ogz");
-    assoc::set(".csg", "csgui.ogz");
+    assoc::set(".cs",  "csoz.ogz");
+    assoc::set(".sln", "csoz.ogz");
     assoc::save();
     syslog::info("apps", "created default /etc/filetypes");
+  }
+
+  // ── Migrate old csharp.ogz associations to csoz.ogz ────────────────────
+  const char *cs_app = assoc::get(".cs");
+  if (cs_app && str::cmp(cs_app, "csharp.ogz") == 0) {
+    assoc::set(".cs", "csoz.ogz");
+    assoc::set(".sln", "csoz.ogz");
+    assoc::save();
+    syslog::info("apps", "migrated .cs/.sln associations to csoz.ogz");
   }
 
   // ── Default start menu ────────────────────────────────────────────────
   menu::init();
   menu::load();
+
+  // ── Migrate: remove csgui.ogz from existing menus (it is now internal) ──
+  {
+    i32 idx = menu::find("csgui.ogz");
+    if (idx >= 0) {
+      menu::remove(idx);
+      menu::save();
+      syslog::info("apps", "removed csgui.ogz from start menu (now internal)");
+    }
+  }
   if (menu::count() == 0) {
     for (i32 i = 0; i < app_count; i++) {
       const OgzApp *app = app_list[i];

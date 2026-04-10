@@ -110,7 +110,7 @@ constexpr u64 SYS_FB_SET_RES       = 123;
 constexpr u64 SYS_KBD_LAYOUT_NAME  = 130;
 constexpr u64 SYS_KBD_LAYOUT_COUNT = 131;
 
-/* C# interpreter */
+/* CSOZ interpreter */
 constexpr u64 SYS_CS_RUN           = 140;
 constexpr u64 SYS_CS_INIT          = 141;
 constexpr u64 SYS_CS_CALL_DRAW     = 142;

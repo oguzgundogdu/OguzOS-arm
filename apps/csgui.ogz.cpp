@@ -4,7 +4,7 @@
 #ifdef USERSPACE
 #include "userapi.h"
 #else
-#include "csharp.h"
+#include "csoz.h"
 #include "fs.h"
 #include "graphics.h"
 #include "string.h"
@@ -54,13 +54,13 @@ void csgui_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
   }
 
   // Call C# OnDraw
-  csharp::set_draw_ctx(cx, cy, cw, ch);
-  csharp::call_draw();
+  csoz::set_draw_ctx(cx, cy, cw, ch);
+  csoz::call_draw();
 
   // Check for runtime error after drawing
-  if (csharp::has_error()) {
+  if (csoz::has_error()) {
     s->error = true;
-    const char *emsg = csharp::get_error();
+    const char *emsg = csoz::get_error();
     if (emsg && emsg[0])
       str::ncpy(s->error_msg, emsg, 127);
     else
@@ -71,10 +71,10 @@ void csgui_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
 bool csgui_key(u8 *state, char key) {
   auto *s = reinterpret_cast<CsGuiState *>(state);
   if (!s->initialized || s->error) return false;
-  bool consumed = csharp::call_key(key);
-  if (csharp::has_error()) {
+  bool consumed = csoz::call_key(key);
+  if (csoz::has_error()) {
     s->error = true;
-    const char *emsg = csharp::get_error();
+    const char *emsg = csoz::get_error();
     if (emsg && emsg[0])
       str::ncpy(s->error_msg, emsg, 127);
     else
@@ -86,20 +86,20 @@ bool csgui_key(u8 *state, char key) {
 void csgui_arrow(u8 *state, char dir) {
   auto *s = reinterpret_cast<CsGuiState *>(state);
   if (!s->initialized) return;
-  csharp::call_arrow(dir);
+  csoz::call_arrow(dir);
 }
 
 void csgui_close(u8 *) {
-  csharp::gui_cleanup();
+  csoz::gui_cleanup();
 }
 
 void csgui_click(u8 *state, i32 rx, i32 ry, i32 /*cw*/, i32 /*ch*/) {
   auto *s = reinterpret_cast<CsGuiState *>(state);
   if (!s->initialized || s->error) return;
-  csharp::call_click(rx, ry);
-  if (csharp::has_error()) {
+  csoz::call_click(rx, ry);
+  if (csoz::has_error()) {
     s->error = true;
-    const char *emsg = csharp::get_error();
+    const char *emsg = csoz::get_error();
     if (emsg && emsg[0])
       str::ncpy(s->error_msg, emsg, 127);
     else
@@ -112,13 +112,13 @@ void csgui_scroll(u8 *, i32) {}
 void csgui_mouse_down(u8 *state, i32 rx, i32 ry, i32 /*cw*/, i32 /*ch*/) {
   auto *s = reinterpret_cast<CsGuiState *>(state);
   if (!s->initialized || s->error) return;
-  csharp::call_mouse_down(rx, ry);
+  csoz::call_mouse_down(rx, ry);
 }
 
 void csgui_mouse_move(u8 *state, i32 rx, i32 ry, i32 /*cw*/, i32 /*ch*/) {
   auto *s = reinterpret_cast<CsGuiState *>(state);
   if (!s->initialized || s->error) return;
-  csharp::call_mouse_move(rx, ry);
+  csoz::call_mouse_move(rx, ry);
 }
 
 void csgui_open_file(u8 *state, const char *path, const char *content) {
@@ -127,7 +127,7 @@ void csgui_open_file(u8 *state, const char *path, const char *content) {
 
   // Load and initialize the C# program
   syslog::info("csgui", "init source len=%d", static_cast<i32>(str::len(content)));
-  if (!csharp::init(content)) {
+  if (!csoz::init(content)) {
     s->error = true;
     str::cpy(s->error_msg, "Failed to initialize program");
     syslog::error("csgui", "init failed");
@@ -135,10 +135,10 @@ void csgui_open_file(u8 *state, const char *path, const char *content) {
   }
 
   syslog::info("csgui", "has OnDraw=%d has Main=%d",
-               csharp::has_func("OnDraw") ? 1 : 0,
-               csharp::has_func("Main") ? 1 : 0);
+               csoz::has_func("OnDraw") ? 1 : 0,
+               csoz::has_func("Main") ? 1 : 0);
 
-  if (!csharp::has_func("OnDraw")) {
+  if (!csoz::has_func("OnDraw")) {
     s->error = true;
     str::cpy(s->error_msg, "No OnDraw() method found");
     return;
@@ -149,7 +149,7 @@ void csgui_open_file(u8 *state, const char *path, const char *content) {
 }
 
 const OgzApp csgui_app = {
-    "C# App",        // name
+    "CSOZ App",        // name
     "csgui.ogz",     // id
     500,              // default_w
     400,              // default_h
@@ -168,5 +168,6 @@ const OgzApp csgui_app = {
 } // anonymous namespace
 
 namespace apps {
-void register_csgui() { register_app(&csgui_app); }
+// Not registered in the public app registry — used internally by gui::open_file()
+const OgzApp *get_csgui_host() { return &csgui_app; }
 } // namespace apps

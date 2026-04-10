@@ -13,7 +13,7 @@
 #include "fs.h"
 #include "graphics.h"
 #include "gui.h"
-#include "csharp.h"
+#include "csoz.h"
 #include "menu.h"
 #include "net.h"
 #include "netdev.h"
@@ -803,7 +803,7 @@ void terminal_open_file(u8 *state, const char *path, const char *content) {
     usize plen = str::len(path);
     // .cs files → Window apps launch as GUI, console apps run inline
     if (plen > 3 && str::cmp(path + plen - 3, ".cs") == 0) {
-      if (content && csharp::is_window_app(content)) {
+      if (content && csoz::is_window_app(content)) {
         gui::open_file(path, content);
         return;
       }

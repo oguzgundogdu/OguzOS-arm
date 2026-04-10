@@ -4,7 +4,7 @@
 #ifdef USERSPACE
 #include "userapi.h"
 #else
-#include "csharp.h"
+#include "csoz.h"
 #include "fs.h"
 #include "graphics.h"
 #include "gui.h"
@@ -13,7 +13,7 @@
 #endif
 
 /*
- * csharp.ogz — OguzOS C# IDE
+ * csoz.ogz — CSOZ IDE
  *
  * Split-pane editor: code on top, output on bottom.
  * Solution explorer panel on the left for .sln projects.
@@ -1049,7 +1049,7 @@ void draw_sln_panel(CSharpState *s, i32 px, i32 py, i32 pw, i32 ph) {
 }
 
 // ── Callbacks ───────────────────────────────────────────────────────────────
-void csharp_open(u8 *state) {
+void csoz_open(u8 *state) {
   auto *s = reinterpret_cast<CSharpState *>(state);
   s->src[0] = '\0';
   s->src_len = 0;
@@ -1114,7 +1114,7 @@ void draw_dialog(i32 cx, i32 cy, i32 cw, i32 ch,
   gfx::draw_text(dx + 10, dy + dh - fh - 6, hint, COL_COMMENT, 0x002D2D3D);
 }
 
-void csharp_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
+void csoz_draw(u8 *state, i32 cx, i32 cy, i32 cw, i32 ch) {
   auto *s = reinterpret_cast<CSharpState *>(state);
 
   // ── Template chooser screen ──
@@ -1473,7 +1473,7 @@ bool dialog_key(char key, char *buf, i32 &cursor, i32 max_len) {
   return true;
 }
 
-bool csharp_key(u8 *state, char key) {
+bool csoz_key(u8 *state, char key) {
   auto *s = reinterpret_cast<CSharpState *>(state);
 
   // Solution name dialog (from template chooser)
@@ -1635,19 +1635,19 @@ bool csharp_key(u8 *state, char key) {
 
       fs::cd(old);
       run_src = merged_src;
-      gui_mode = csharp::is_window_app(run_src);
+      gui_mode = csoz::is_window_app(run_src);
     } else if (s->filepath[0]) {
-      gui_mode = csharp::is_window_app(s->src);
+      gui_mode = csoz::is_window_app(s->src);
     }
 
     if (gui_mode) {
       // GUI mode: validate first using init(), then launch if OK
-      bool valid = csharp::init(run_src);
-      csharp::gui_cleanup();
+      bool valid = csoz::init(run_src);
+      csoz::gui_cleanup();
       s->has_output = true;
       if (!valid) {
         s->ran_ok = false;
-        csharp::run(run_src, s->output, OUT_MAX);
+        csoz::run(run_src, s->output, OUT_MAX);
         s->out_scroll = 0;
       } else {
         // Build the .cs path for launching
@@ -1690,7 +1690,7 @@ bool csharp_key(u8 *state, char key) {
       }
     } else {
       // Console mode: run the entry file source
-      s->ran_ok = csharp::run(run_src, s->output, OUT_MAX);
+      s->ran_ok = csoz::run(run_src, s->output, OUT_MAX);
       s->has_output = true;
       s->out_scroll = 0;
     }
@@ -1784,7 +1784,7 @@ bool csharp_key(u8 *state, char key) {
   return false;
 }
 
-void csharp_arrow(u8 *state, char dir) {
+void csoz_arrow(u8 *state, char dir) {
   auto *s = reinterpret_cast<CSharpState *>(state);
 
   // Template chooser: left/right to switch
@@ -1840,7 +1840,7 @@ void csharp_arrow(u8 *state, char dir) {
   }
 }
 
-void csharp_close(u8 *state) {
+void csoz_close(u8 *state) {
   auto *s = reinterpret_cast<CSharpState *>(state);
   // Auto-save on close if in a solution
   if (s->sln.active && s->dirty) {
@@ -1849,7 +1849,7 @@ void csharp_close(u8 *state) {
   }
 }
 
-void csharp_click(u8 *state, i32 rx, i32 ry, i32 cw, i32 ch) {
+void csoz_click(u8 *state, i32 rx, i32 ry, i32 cw, i32 ch) {
   auto *s = reinterpret_cast<CSharpState *>(state);
 
   // Template chooser: click on a card to select + create
@@ -1934,7 +1934,7 @@ void csharp_click(u8 *state, i32 rx, i32 ry, i32 cw, i32 ch) {
     const char *run_label = s->sln.active ? (s->sln.type == 1 ? "> Run GUI" : "> Run") : "> Run";
     i32 rw = btn_w(run_label);
     if (rx >= bx2 && rx < bx2 + rw) {
-      csharp_key(state, 0x12); // trigger F5/Run
+      csoz_key(state, 0x12); // trigger F5/Run
       return;
     }
     bx2 += rw + 4;
@@ -1942,7 +1942,7 @@ void csharp_click(u8 *state, i32 rx, i32 ry, i32 cw, i32 ch) {
     // Save button
     i32 sw = btn_w("Save");
     if (rx >= bx2 && rx < bx2 + sw) {
-      csharp_key(state, 0x13); // trigger Ctrl+S
+      csoz_key(state, 0x13); // trigger Ctrl+S
       return;
     }
     bx2 += sw + 4;
@@ -1950,7 +1950,7 @@ void csharp_click(u8 *state, i32 rx, i32 ry, i32 cw, i32 ch) {
     // Save As button
     i32 saw = btn_w("Save As");
     if (rx >= bx2 && rx < bx2 + saw) {
-      csharp_key(state, 0x17); // trigger Ctrl+W
+      csoz_key(state, 0x17); // trigger Ctrl+W
       return;
     }
     bx2 += saw + 4 + 1 + 6; // + separator
@@ -2020,7 +2020,7 @@ void csharp_click(u8 *state, i32 rx, i32 ry, i32 cw, i32 ch) {
   }
 }
 
-void csharp_mouse_down(u8 *state, i32 rx, i32 ry, i32 /*cw*/, i32 ch) {
+void csoz_mouse_down(u8 *state, i32 rx, i32 ry, i32 /*cw*/, i32 ch) {
   auto *s = reinterpret_cast<CSharpState *>(state);
   if (s->saveas_open || s->addfile_open) return;
   i32 panel_w = (s->sln_panel_open && s->sln.active) ? SLN_PANEL_W : 0;
@@ -2036,7 +2036,7 @@ void csharp_mouse_down(u8 *state, i32 rx, i32 ry, i32 /*cw*/, i32 ch) {
   }
 }
 
-void csharp_mouse_move(u8 *state, i32 rx, i32 ry, i32 /*cw*/, i32 ch) {
+void csoz_mouse_move(u8 *state, i32 rx, i32 ry, i32 /*cw*/, i32 ch) {
   auto *s = reinterpret_cast<CSharpState *>(state);
   if (s->saveas_open || s->addfile_open) return;
   i32 panel_w = (s->sln_panel_open && s->sln.active) ? SLN_PANEL_W : 0;
@@ -2048,13 +2048,13 @@ void csharp_mouse_move(u8 *state, i32 rx, i32 ry, i32 /*cw*/, i32 ch) {
   s->cursor = pos_from_xy(s, erx, ery, ch, editor_h);
 }
 
-void csharp_scroll(u8 *state, i32 delta) {
+void csoz_scroll(u8 *state, i32 delta) {
   auto *s = reinterpret_cast<CSharpState *>(state);
   s->scroll_y -= delta * 3;
   if (s->scroll_y < 0) s->scroll_y = 0;
 }
 
-void csharp_open_file(u8 *state, const char *path, const char *content) {
+void csoz_open_file(u8 *state, const char *path, const char *content) {
   auto *s = reinterpret_cast<CSharpState *>(state);
 
   // Check if this is a .sln file
@@ -2078,25 +2078,25 @@ void csharp_open_file(u8 *state, const char *path, const char *content) {
   s->show_template = false;
 }
 
-const OgzApp csharp_app = {
-    "C# IDE",        // name
-    "csharp.ogz",    // id
+const OgzApp csoz_app = {
+    "CSOZ IDE",        // name
+    "csoz.ogz",    // id
     860,             // default_w (wider for explorer panel)
     600,             // default_h
-    csharp_open,
-    csharp_draw,
-    csharp_key,
-    csharp_arrow,
-    csharp_close,
-    csharp_click,
-    csharp_scroll,
-    csharp_mouse_down,
-    csharp_mouse_move,
-    csharp_open_file,
+    csoz_open,
+    csoz_draw,
+    csoz_key,
+    csoz_arrow,
+    csoz_close,
+    csoz_click,
+    csoz_scroll,
+    csoz_mouse_down,
+    csoz_mouse_move,
+    csoz_open_file,
 };
 
 } // anonymous namespace
 
 namespace apps {
-void register_csharp() { register_app(&csharp_app); }
+void register_csoz() { register_app(&csoz_app); }
 } // namespace apps

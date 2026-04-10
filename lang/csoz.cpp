@@ -1,4 +1,4 @@
-#include "csharp.h"
+#include "csoz.h"
 #include "fs.h"
 #include "graphics.h"
 #include "string.h"
@@ -2237,7 +2237,7 @@ void reset_state() {
 } // anonymous namespace
 
 // ── Public API ──────────────────────────────────────────────────────────────
-namespace csharp {
+namespace csoz {
 
 bool run(const char *source, char *out_buf, i32 out_size) {
   src = source;
@@ -2397,4 +2397,4 @@ void gui_cleanup() {
   canvas_w = canvas_h = 0;
 }
 
-} // namespace csharp
+} // namespace csoz

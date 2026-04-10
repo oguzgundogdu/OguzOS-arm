@@ -13,7 +13,7 @@
 #include "settings.h"
 #include "string.h"
 #include "syslog.h"
-#include "csharp.h"
+#include "csoz.h"
 #include "types.h"
 #include "uart.h"
 
@@ -2036,8 +2036,8 @@ void open_file(const char *path, const char *content) {
       open_app(name);
       return;
     }
-    // Not a native app — try running as a C# executable via csgui host
-    const OgzApp *host = apps::find("csgui.ogz");
+    // Not a native app — run as CSOZ program via internal GUI host
+    const OgzApp *host = apps::get_csgui_host();
     if (host && host->on_open_file) {
       i32 idx = create_window(name, 80, 30, host->default_w, host->default_h,
                                WIN_APP);
@@ -2049,7 +2049,7 @@ void open_file(const char *path, const char *content) {
             el0_app_call((void *)host->on_open_file,
               (u64)windows[idx].app_state, (u64)path,
               (u64)content, 0, 0, idx)) {
-          syslog::info("gui", "launched C# app '%s' via csgui", name);
+          syslog::info("gui", "launched CSOZ app '%s'", name);
         } else {
           close_window(idx);
         }
@@ -2058,24 +2058,28 @@ void open_file(const char *path, const char *content) {
     }
   }
 
-  // Check if .cs file is a Window app → launch via csgui host
-  if (content && nlen > 3 && str::cmp(name + nlen - 3, ".cs") == 0 &&
-      csharp::is_window_app(content)) {
-    const OgzApp *host = apps::find("csgui.ogz");
-    if (host && host->on_open_file) {
-      i32 idx = create_window(name, 80, 30, host->default_w, host->default_h,
-                               WIN_APP);
-      if (idx >= 0) {
-        windows[idx].app = const_cast<OgzApp *>(host);
-        str::memset(windows[idx].app_state, 0, sizeof(windows[idx].app_state));
-        if (el0_app_call((void *)host->on_open,
-              (u64)windows[idx].app_state, 0, 0, 0, 0, idx) &&
-            el0_app_call((void *)host->on_open_file,
-              (u64)windows[idx].app_state, (u64)path,
-              (u64)content, 0, 0, idx)) {
-          syslog::info("gui", "launched Window app '%s' via csgui", name);
-        } else {
-          close_window(idx);
+  // .csg files are always window apps; .cs files that define a Window class too
+  {
+    bool is_csg = (nlen > 4 && str::cmp(name + nlen - 4, ".csg") == 0);
+    bool is_cs_win = (content && nlen > 3 && str::cmp(name + nlen - 3, ".cs") == 0 &&
+                      csoz::is_window_app(content));
+    if (is_csg || is_cs_win) {
+      const OgzApp *host = apps::get_csgui_host();
+      if (host && host->on_open_file) {
+        i32 idx = create_window(name, 80, 30, host->default_w, host->default_h,
+                                 WIN_APP);
+        if (idx >= 0) {
+          windows[idx].app = const_cast<OgzApp *>(host);
+          str::memset(windows[idx].app_state, 0, sizeof(windows[idx].app_state));
+          if (el0_app_call((void *)host->on_open,
+                (u64)windows[idx].app_state, 0, 0, 0, 0, idx) &&
+              el0_app_call((void *)host->on_open_file,
+                (u64)windows[idx].app_state, (u64)path,
+                (u64)content, 0, 0, idx)) {
+            syslog::info("gui", "launched CSOZ window app '%s'", name);
+          } else {
+            close_window(idx);
+          }
         }
       }
       return;

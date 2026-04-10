@@ -29,4 +29,7 @@ const OgzApp *get(i32 index);
 // Find app by id (e.g. "notepad.ogz"), returns nullptr if not found
 const OgzApp *find(const char *id);
 
+// Get the internal CSOZ GUI host (not a user-facing app, not in registry)
+const OgzApp *get_csgui_host();
+
 } // namespace apps

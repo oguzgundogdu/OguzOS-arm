@@ -3,19 +3,20 @@
 #include "types.h"
 
 /*
- * Mini C# Interpreter for OguzOS
+ * CSOZ — C# Interpreter for OguzOS
  *
  * Console mode: run() executes source and writes output to a buffer.
  * GUI mode:     init() loads source, then call_draw/click/key per frame.
  *
  * Built-in APIs:
  *   Console.WriteLine(expr), Console.Write(expr)
- *   Gfx.Clear(color), Gfx.FillRect(x,y,w,h,color), Gfx.Rect(x,y,w,h,color)
- *   Gfx.DrawText(x,y,text,color), Gfx.Pixel(x,y,color), Gfx.Line(x1,y1,x2,y2,color)
+ *   Gfx.Clear/FillRect/Rect/DrawText/Pixel/Line/HLine
+ *   Canvas.Create/Clear/SetPixel/Line/FillRect/Rect/Brush/Draw
  *   App.Close(), App.Width(), App.Height()
+ *   UI.CreateLabel/CreateButton/CreateTextBox/CreateCheckBox/CreatePanel
  */
 
-namespace csharp {
+namespace csoz {
 
 // ── Console mode ────────────────────────────────────────────────────────────
 bool run(const char *source, char *out_buf, i32 out_size);
@@ -51,4 +52,4 @@ const char *get_error();
 // Clean up GUI state
 void gui_cleanup();
 
-} // namespace csharp
+} // namespace csoz

@@ -2,7 +2,7 @@
 #include "assoc.h"
 #include "clipboard.h"
 #include "commands.h"
-#include "csharp.h"
+#include "csoz.h"
 #include "disk.h"
 #include "env.h"
 #include "fb.h"
@@ -273,35 +273,35 @@ extern "C" u64 syscall_dispatch(u64 nr, u64 *regs) {
 
     /* ── C# interpreter ─────────────────────────────────────────────── */
     case SYS_CS_RUN:
-        return csharp::run((const char *)regs[0], (char *)regs[1], (i32)regs[2]) ? 1 : 0;
+        return csoz::run((const char *)regs[0], (char *)regs[1], (i32)regs[2]) ? 1 : 0;
     case SYS_CS_INIT:
-        return csharp::init((const char *)regs[0]) ? 1 : 0;
+        return csoz::init((const char *)regs[0]) ? 1 : 0;
     case SYS_CS_CALL_DRAW:
-        csharp::call_draw(); return 0;
+        csoz::call_draw(); return 0;
     case SYS_CS_CALL_CLICK:
-        csharp::call_click((i32)regs[0], (i32)regs[1]); return 0;
+        csoz::call_click((i32)regs[0], (i32)regs[1]); return 0;
     case SYS_CS_CALL_KEY:
-        return csharp::call_key((char)regs[0]) ? 1 : 0;
+        return csoz::call_key((char)regs[0]) ? 1 : 0;
     case SYS_CS_CALL_ARROW:
-        csharp::call_arrow((char)regs[0]); return 0;
+        csoz::call_arrow((char)regs[0]); return 0;
     case SYS_CS_SHOULD_CLOSE:
-        return csharp::should_close() ? 1 : 0;
+        return csoz::should_close() ? 1 : 0;
     case SYS_CS_HAS_ERROR:
-        return csharp::has_error() ? 1 : 0;
+        return csoz::has_error() ? 1 : 0;
     case SYS_CS_GET_ERROR:
-        return copy_to_transfer(csharp::get_error());
+        return copy_to_transfer(csoz::get_error());
     case SYS_CS_GUI_CLEANUP:
-        csharp::gui_cleanup(); return 0;
+        csoz::gui_cleanup(); return 0;
     case SYS_CS_HAS_FUNC:
-        return csharp::has_func((const char *)regs[0]) ? 1 : 0;
+        return csoz::has_func((const char *)regs[0]) ? 1 : 0;
     case SYS_CS_SET_DRAW_CTX:
-        csharp::set_draw_ctx((i32)regs[0], (i32)regs[1], (i32)regs[2], (i32)regs[3]);
+        csoz::set_draw_ctx((i32)regs[0], (i32)regs[1], (i32)regs[2], (i32)regs[3]);
         return 0;
     case SYS_CS_CALL_MOUSE_DN:
-        csharp::call_mouse_down((i32)regs[0], (i32)regs[1]);
+        csoz::call_mouse_down((i32)regs[0], (i32)regs[1]);
         return 0;
     case SYS_CS_CALL_MOUSE_MV:
-        csharp::call_mouse_move((i32)regs[0], (i32)regs[1]);
+        csoz::call_mouse_move((i32)regs[0], (i32)regs[1]);
         return 0;
 
     /* ── Shell command execution ────────────────────────────────────── */

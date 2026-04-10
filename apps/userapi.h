@@ -274,8 +274,8 @@ namespace unetdev {
         { str::cpy((char*)buf, "52:54:00:12:34:56"); }
 }
 
-/* ── User-space C# interpreter ──────────────────────────────────────── */
-namespace ucsharp {
+/* ── User-space CSOZ interpreter ────────────────────────────────────── */
+namespace ucsoz {
     inline bool run(const char *src, char *out, i32 sz)
         { return _svc3(SYS_CS_RUN, (u64)src, (u64)out, (u64)sz) != 0; }
     inline bool init(const char *src)
@@ -342,7 +342,7 @@ namespace fb       = ufb;
 namespace keyboard = ukeyboard;
 namespace mouse    = umouse;
 namespace netdev   = unetdev;
-namespace csharp   = ucsharp;
+namespace csoz     = ucsoz;
 
 /* apps:: is NOT aliased — registry.h is always included for the
    register_* functions. User code that queries apps should use
