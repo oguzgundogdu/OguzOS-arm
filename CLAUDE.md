@@ -20,12 +20,15 @@ make distclean    # Also remove disk.img (forces fresh filesystem on next boot)
 
 **Toolchain:** Requires an AArch64 cross-compiler (`aarch64-elf-g++`, `aarch64-none-elf-g++`, or `aarch64-linux-gnu-g++`). The Makefile auto-detects which is available. Override with `CROSS=aarch64-linux-gnu- make`.
 
+**Resolution/Keyboard overrides:** `make gui RES=1280x720 KBD=tr`. Supported keyboards: us, uk, tr, de, fr, es, it, pt. Default: 1920x1080, us.
+
 **Important:** After changing filesystem layout or config file formats, run `make distclean` to delete the old `disk.img` — otherwise `load_from_disk()` restores the stale image and skips `fs::init()`.
 
 ## Project Structure
 
 ```
-arch/       — ARM64 bootstrap (boot.S), exception vectors (exception.S), linker script
+arch/       — ARM64 bootstrap (boot.S), exception vectors (exception.S), MMU (mmu.cpp),
+              EL0 trampoline (el0.S), syscall layer (syscall.cpp), user stacks (userstacks.cpp), linker script
 kernel/     — Kernel entry point (kernel_main)
 drivers/    — PL011 UART, Virtio block/net, ramfb, virtio-tablet, virtio-keyboard
 fs/         — In-memory hierarchical file system (128 nodes, 4KB/file)
@@ -33,7 +36,7 @@ net/        — Network stack (ARP, IPv4, ICMP, UDP, DHCP, DNS, HTTP, NTP)
 gui/        — Window manager, desktop, start menu, file explorer
 apps/       — GUI applications (.ogz.cpp files): notepad, terminal, task manager, settings, browser, C# IDE, C# GUI host
 shell/      — UART shell, shared command library (commands.cpp)
-lib/        — String/memory utils, syslog, settings, env vars, file assoc, menu config
+lib/        — String/memory utils, syslog, settings, env vars, file assoc, menu config, native UI widgets (ui.h)
 lang/       — Mini C# interpreter (console + GUI modes) with widget system
 scripts/    — QEMU launcher (run.sh) and UTM image builder (mkimage.sh)
 build/      — Generated object files and binaries (gitignored)
@@ -45,12 +48,13 @@ build/      — Generated object files and binaries (gitignored)
 
 `arch/boot.S` → `kernel_main()` (kernel/kernel.cpp):
 1. UART, disk, framebuffer, mouse, keyboard init
-2. Network init (virtio-net + DHCP + NTP)
-3. Filesystem: load from disk or `fs::init()` (creates `/bin`, `/home`, `/etc`, `/tmp`, `/var`)
-4. `settings::load()`, `env::init()`, `assoc::init()`+load, `syslog::init()`
-5. Register apps → populate `/bin` with app descriptors → build `/etc/menu` defaults
-6. `menu::init()`+load
-7. If framebuffer available → `gui::run()`, else → `shell::run()`
+2. MMU init (`mmu::init()` + `mmu::set_user_accessible()` for EL0 RAM access)
+3. Network init (virtio-net + DHCP + NTP)
+4. Filesystem: load from disk or `fs::init()` (creates `/bin`, `/home`, `/etc`, `/tmp`, `/var`)
+5. `settings::load()`, `env::init()`, `assoc::init()`+load, `syslog::init()`
+6. Register apps → populate `/bin` with app descriptors → build `/etc/menu` defaults
+7. `menu::init()`+load
+8. If framebuffer available → `gui::run()`, else → `shell::run()`
 
 ### Two Shells — Shared Command Library
 
@@ -104,6 +108,10 @@ Object files are listed explicitly in the Makefile `OBJS` list (not auto-discove
 
 When adding a new `.cpp` file: add a build rule in the Makefile following the existing pattern and append the new `.o` to the `OBJS` list.
 
+**Compiler flag variants:** Kernel/driver code uses `$(CXXFLAGS)`. App `.ogz.cpp` files use `$(USERFLAGS)` which adds `-DUSERSPACE`. Check existing rules for which to use.
+
+**Embedded data files:** Some data is embedded via assembly `.incbin` directives (e.g., `apps/calculator_embed.S` embeds `calculator.cs`, `lib/ogzlib_embed.S` embeds `OguzOS.UI.ogzl`). These have dependencies on both the `.S` and the data file in the Makefile.
+
 ## Adding New GUI Apps
 
 Apps use the `.ogz.cpp` naming convention and follow a function-pointer interface defined in `apps/app.h`.
@@ -116,7 +124,7 @@ Apps use the `.ogz.cpp` naming convention and follow a function-pointer interfac
 
 **App registry** holds up to 16 apps (`MAX_APPS`). Registration calls `apps::register_app(&app_struct)` which stores the pointer and creates the `/bin/` entry.
 
-**OgzApp callbacks:** `on_open`, `on_draw`, `on_key`, `on_arrow`, `on_close` are required; `on_click`, `on_scroll`, `on_mouse_down`, `on_mouse_move`, `on_open_file` can be `nullptr`. `on_key` returns `bool` (true if the key was consumed). Each app window gets a 4096-byte `app_state` buffer — use `static_assert(sizeof(MyState) <= 4096)` to enforce.
+**OgzApp callbacks:** `on_open`, `on_draw`, `on_key`, `on_arrow`, `on_close` are required; `on_click`, `on_scroll`, `on_mouse_down`, `on_mouse_move`, `on_open_file` can be `nullptr`. `on_key` returns `bool` (true if the key was consumed). Each app window gets an 8192-byte `app_state` buffer — use `static_assert(sizeof(MyState) <= 8192)` to enforce.
 
 **`on_open_file`** — optional callback `void (*)(u8 *state, const char *path, const char *content)` called after `on_open` when the app is launched to open a specific file. Used by Notepad (text editing) and Terminal (command execution).
 
@@ -154,6 +162,26 @@ File=Utils.cs
 - Switching files auto-saves the current file to the filesystem
 - Template chooser offers "Solution (.sln)" as a third project type
 - `.sln` files are associated with `csharp.ogz` via `assoc::`
+
+## EL0 User-Mode Execution
+
+The OS supports running app code at EL0 (user privilege level) via the `arch/` subsystem:
+
+- `arch/mmu.cpp` — Two-level page tables (L1 1GB blocks, L2 2MB blocks). `mmu::init()` sets up identity mapping; `mmu::set_user_accessible()` grants EL0 read/write to RAM blocks (excluding kernel .text at 0x40000000–0x40200000)
+- `arch/el0.S` — `el0_call()` trampoline: drops to EL0 via `ERET`, executes a function pointer, returns to EL1 via `SVC #0`
+- `arch/syscall.cpp` — Handles SVC from EL0. Provides transfer buffers for passing data between EL0 and EL1
+- `arch/userstacks.cpp` — Allocates per-window user stacks (8 windows × 16KB each) in a dedicated `.userstacks` linker section
+
+## Native UI Component Library
+
+`lib/ui.h` (`ui::` namespace) provides reusable widget structs for native `.ogz` apps:
+
+- `ui::Label`, `ui::Button`, `ui::TextBox`, `ui::CheckBox`, `ui::Panel`
+- Each widget has `draw(ox, oy)` (offset-relative rendering), `hit_test(mx, my)`, and type-specific methods (`click`, `key`, `focus`/`unfocus` for TextBox; `toggle` for CheckBox)
+- Factory functions: `ui::make_label()`, `ui::make_button()`, `ui::make_textbox()`, `ui::make_checkbox()`, `ui::make_panel()`
+- Text fields are 56 chars max
+
+This is separate from the C# widget system in `lang/csharp.cpp` — the native UI library is for `.ogz` apps written in C++.
 
 ## Graphics Primitives
 
