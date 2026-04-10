@@ -94,11 +94,24 @@ namespace ugui {
         { return (i32)_svc1(SYS_GUI_WIN_TYPE, (u64)idx); }
     inline const char* get_window_app_id(i32 idx)
         { return (const char*)_svc1(SYS_GUI_WIN_APP_ID, (u64)idx); }
+    inline void toast(const char *msg)
+        { _svc1(SYS_GUI_TOAST, (u64)msg); }
     /* Window type constants (mirror gui.cpp WinType enum) */
     constexpr i32 WTYPE_EXPLORER = 0;
     constexpr i32 WTYPE_TEXTVIEW = 1;
     constexpr i32 WTYPE_APP      = 2;
 }
+
+/* ── User-space clipboard ──────────────────────────────────────────── */
+namespace uclip {
+    inline void copy(const char *text)
+        { _svc1(SYS_CLIP_COPY, (u64)text); }
+    inline const char* paste()
+        { return (const char*)_svc0(SYS_CLIP_PASTE); }
+    inline bool has_data()
+        { return _svc0(SYS_CLIP_HAS) != 0; }
+}
+namespace clipboard = uclip;
 
 /* ── User-space app registry ────────────────────────────────────────── */
 namespace uapps {
@@ -299,6 +312,10 @@ namespace ucsharp {
     }
     inline void set_draw_ctx(i32 cx, i32 cy, i32 cw, i32 ch)
         { _svc4(SYS_CS_SET_DRAW_CTX, (u64)cx, (u64)cy, (u64)cw, (u64)ch); }
+    inline void call_mouse_down(i32 x, i32 y)
+        { _svc2(SYS_CS_CALL_MOUSE_DN, (u64)x, (u64)y); }
+    inline void call_mouse_move(i32 x, i32 y)
+        { _svc2(SYS_CS_CALL_MOUSE_MV, (u64)x, (u64)y); }
 }
 
 /* ── Shell command execution ────────────────────────────────────────── */

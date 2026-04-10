@@ -100,6 +100,7 @@ void init() {
     assoc::set(".json","notepad.ogz");
     assoc::set(".cs",  "csharp.ogz");
     assoc::set(".sln", "csharp.ogz");
+    assoc::set(".csg", "csgui.ogz");
     assoc::save();
     syslog::info("apps", "created default /etc/filetypes");
   }
@@ -114,6 +115,7 @@ void init() {
         menu::add(menu::ENTRY_APP, app->name, app->id);
     }
     menu::add(menu::ENTRY_APP, "Calculator", "calculator.cs");
+    menu::add(menu::ENTRY_APP, "Paint", "paint.csg");
     menu::add(menu::ENTRY_SEP, "---", "");
     menu::add(menu::ENTRY_EXPLORER, "File Explorer", "");
     menu::add(menu::ENTRY_ABOUT, "About OguzOS", "");

@@ -32,6 +32,7 @@ constexpr u64 SYS_GUI_WIN_TITLE    = 33;
 constexpr u64 SYS_GUI_WIN_ACTIVE   = 34;
 constexpr u64 SYS_GUI_WIN_TYPE     = 35;
 constexpr u64 SYS_GUI_WIN_APP_ID   = 36;
+constexpr u64 SYS_GUI_TOAST        = 37;
 
 /* App registry */
 constexpr u64 SYS_APPS_COUNT       = 40;
@@ -122,6 +123,8 @@ constexpr u64 SYS_CS_GET_ERROR     = 148;
 constexpr u64 SYS_CS_GUI_CLEANUP   = 149;
 constexpr u64 SYS_CS_HAS_FUNC      = 150;
 constexpr u64 SYS_CS_SET_DRAW_CTX  = 151;
+constexpr u64 SYS_CS_CALL_MOUSE_DN = 152;
+constexpr u64 SYS_CS_CALL_MOUSE_MV = 153;
 
 /* Shell command execution (for GUI terminal) */
 constexpr u64 SYS_CMD_EXEC         = 160;
@@ -131,6 +134,11 @@ constexpr u64 SYS_MOUSE_AVAILABLE  = 170;
 
 /* Netdev */
 constexpr u64 SYS_NETDEV_AVAILABLE = 180;
+
+/* Clipboard */
+constexpr u64 SYS_CLIP_COPY       = 190;
+constexpr u64 SYS_CLIP_PASTE      = 191;
+constexpr u64 SYS_CLIP_HAS        = 192;
 
 /* Special */
 constexpr u64 SYS_EXIT             = 255;

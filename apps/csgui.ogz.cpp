@@ -109,6 +109,18 @@ void csgui_click(u8 *state, i32 rx, i32 ry, i32 /*cw*/, i32 /*ch*/) {
 
 void csgui_scroll(u8 *, i32) {}
 
+void csgui_mouse_down(u8 *state, i32 rx, i32 ry, i32 /*cw*/, i32 /*ch*/) {
+  auto *s = reinterpret_cast<CsGuiState *>(state);
+  if (!s->initialized || s->error) return;
+  csharp::call_mouse_down(rx, ry);
+}
+
+void csgui_mouse_move(u8 *state, i32 rx, i32 ry, i32 /*cw*/, i32 /*ch*/) {
+  auto *s = reinterpret_cast<CsGuiState *>(state);
+  if (!s->initialized || s->error) return;
+  csharp::call_mouse_move(rx, ry);
+}
+
 void csgui_open_file(u8 *state, const char *path, const char *content) {
   auto *s = reinterpret_cast<CsGuiState *>(state);
   str::ncpy(s->filepath, path, 127);
@@ -148,8 +160,8 @@ const OgzApp csgui_app = {
     csgui_close,
     csgui_click,
     csgui_scroll,
-    nullptr,          // on_mouse_down
-    nullptr,          // on_mouse_move
+    csgui_mouse_down,
+    csgui_mouse_move,
     csgui_open_file,
 };
 

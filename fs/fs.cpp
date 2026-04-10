@@ -6,6 +6,7 @@
 // Embedded filesystem content (from .incbin assembly files)
 extern "C" const char _ogzlib_ui_start[];
 extern "C" const char _calculator_cs_start[];
+extern "C" const char _paint_csg_start[];
 
 namespace {
 
@@ -180,6 +181,8 @@ void init() {
   cd("bin");
   touch("calculator.cs");
   write("calculator.cs", _calculator_cs_start);
+  touch("paint.csg");
+  write("paint.csg", _paint_csg_start);
   cd("/");
 }
 

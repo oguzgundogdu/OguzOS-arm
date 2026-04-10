@@ -1,5 +1,6 @@
 #include "syscall.h"
 #include "assoc.h"
+#include "clipboard.h"
 #include "commands.h"
 #include "csharp.h"
 #include "disk.h"
@@ -129,6 +130,9 @@ extern "C" u64 syscall_dispatch(u64 nr, u64 *regs) {
         return (u64)gui::get_window_type((i32)regs[0]);
     case SYS_GUI_WIN_APP_ID:
         return copy_to_transfer(gui::get_window_app_id((i32)regs[0]));
+    case SYS_GUI_TOAST:
+        gui::toast((const char *)regs[0]);
+        return 0;
 
     /* ── App registry ───────────────────────────────────────────────── */
     case SYS_APPS_COUNT:
@@ -293,6 +297,12 @@ extern "C" u64 syscall_dispatch(u64 nr, u64 *regs) {
     case SYS_CS_SET_DRAW_CTX:
         csharp::set_draw_ctx((i32)regs[0], (i32)regs[1], (i32)regs[2], (i32)regs[3]);
         return 0;
+    case SYS_CS_CALL_MOUSE_DN:
+        csharp::call_mouse_down((i32)regs[0], (i32)regs[1]);
+        return 0;
+    case SYS_CS_CALL_MOUSE_MV:
+        csharp::call_mouse_move((i32)regs[0], (i32)regs[1]);
+        return 0;
 
     /* ── Shell command execution ────────────────────────────────────── */
     case SYS_CMD_EXEC: {
@@ -342,6 +352,15 @@ extern "C" u64 syscall_dispatch(u64 nr, u64 *regs) {
     /* ── Netdev ─────────────────────────────────────────────────────── */
     case SYS_NETDEV_AVAILABLE:
         return netdev::is_available() ? 1 : 0;
+
+    /* ── Clipboard ─────────────────────────────────────────────────── */
+    case SYS_CLIP_COPY:
+        clipboard::copy((const char *)regs[0]);
+        return 0;
+    case SYS_CLIP_PASTE:
+        return copy_to_transfer(clipboard::paste());
+    case SYS_CLIP_HAS:
+        return clipboard::has_data() ? 1 : 0;
 
     /* ── Exit (return from EL0 callback) ────────────────────────────── */
     case SYS_EXIT:

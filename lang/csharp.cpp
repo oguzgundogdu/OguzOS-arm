@@ -163,6 +163,74 @@ i32 ui_handle(i32 type, i32 idx) { return type * UI_POOL_MAX + idx; }
 i32 ui_type(i32 h)  { return h / UI_POOL_MAX; }
 i32 ui_index(i32 h) { return h % UI_POOL_MAX; }
 
+// ── Canvas (C++-backed pixel buffer for C# apps) ──────────────────────────
+constexpr i32 CANVAS_MAX_W = 800;
+constexpr i32 CANVAS_MAX_H = 600;
+u32 canvas_buf[CANVAS_MAX_W * CANVAS_MAX_H]; // ~1.9 MB
+i32 canvas_w = 0, canvas_h = 0;
+bool canvas_active = false;
+
+void canvas_clear(u32 color) {
+  i32 total = canvas_w * canvas_h;
+  for (i32 i = 0; i < total; i++) canvas_buf[i] = color;
+}
+
+void canvas_set_pixel(i32 x, i32 y, u32 color) {
+  if (x >= 0 && y >= 0 && x < canvas_w && y < canvas_h)
+    canvas_buf[y * canvas_w + x] = color;
+}
+
+void canvas_brush(i32 cx, i32 cy, i32 size, u32 color) {
+  i32 r = size / 2;
+  for (i32 dy = -r; dy <= r; dy++)
+    for (i32 dx = -r; dx <= r; dx++)
+      canvas_set_pixel(cx + dx, cy + dy, color);
+}
+
+void canvas_line(i32 x0, i32 y0, i32 x1, i32 y1, i32 size, u32 color) {
+  i32 dx = x1 - x0, dy = y1 - y0;
+  i32 sx = dx >= 0 ? 1 : -1, sy = dy >= 0 ? 1 : -1;
+  if (dx < 0) dx = -dx;
+  if (dy < 0) dy = -dy;
+  if (dx >= dy) {
+    i32 err = dx / 2;
+    i32 y = y0;
+    for (i32 x = x0; ; x += sx) {
+      canvas_brush(x, y, size, color);
+      if (x == x1) break;
+      err -= dy;
+      if (err < 0) { y += sy; err += dx; }
+    }
+  } else {
+    i32 err = dy / 2;
+    i32 x = x0;
+    for (i32 y = y0; ; y += sy) {
+      canvas_brush(x, y, size, color);
+      if (y == y1) break;
+      err -= dx;
+      if (err < 0) { x += sx; err += dy; }
+    }
+  }
+}
+
+void canvas_fill_rect(i32 x, i32 y, i32 w, i32 h, u32 color) {
+  for (i32 row = y; row < y + h; row++)
+    for (i32 col = x; col < x + w; col++)
+      canvas_set_pixel(col, row, color);
+}
+
+void canvas_rect(i32 x, i32 y, i32 w, i32 h, u32 color) {
+  for (i32 i = x; i < x + w; i++) { canvas_set_pixel(i, y, color); canvas_set_pixel(i, y + h - 1, color); }
+  for (i32 i = y; i < y + h; i++) { canvas_set_pixel(x, i, color); canvas_set_pixel(x + w - 1, i, color); }
+}
+
+void canvas_draw(i32 sx, i32 sy) {
+  // Blit canvas to screen at (sx, sy) offset by draw context
+  for (i32 y = 0; y < canvas_h; y++)
+    for (i32 x = 0; x < canvas_w; x++)
+      gfx::pixel(sx + x, sy + y, canvas_buf[y * canvas_w + x]);
+}
+
 // ── Library system (.ogzl) ──────────────────────────────────────────────────
 constexpr i32 MERGED_MAX = 16384;
 char merged_buf[MERGED_MAX];
@@ -895,6 +963,96 @@ Value parse_primary() {
         error("unknown Gfx method");
       }
       expect(T_RPAREN);
+      return make_void();
+    }
+
+    // Canvas.* pixel buffer API
+    if (str::cmp(name, "Canvas") == 0 && match(T_DOT)) {
+      char method[32];
+      tok_text(cur(), method, 32);
+      tp++;
+
+      if (str::cmp(method, "Create") == 0) {
+        expect(T_LPAREN);
+        Value w = parse_expr(); expect(T_COMMA);
+        Value h = parse_expr();
+        expect(T_RPAREN);
+        canvas_w = w.ival > CANVAS_MAX_W ? CANVAS_MAX_W : w.ival;
+        canvas_h = h.ival > CANVAS_MAX_H ? CANVAS_MAX_H : h.ival;
+        canvas_active = true;
+        canvas_clear(0x00FFFFFF);
+        return make_void();
+      } else if (str::cmp(method, "Clear") == 0) {
+        expect(T_LPAREN);
+        Value c = parse_expr();
+        expect(T_RPAREN);
+        if (canvas_active) canvas_clear(static_cast<u32>(c.ival));
+        return make_void();
+      } else if (str::cmp(method, "SetPixel") == 0) {
+        expect(T_LPAREN);
+        Value x = parse_expr(); expect(T_COMMA);
+        Value y = parse_expr(); expect(T_COMMA);
+        Value c = parse_expr();
+        expect(T_RPAREN);
+        if (canvas_active) canvas_set_pixel(x.ival, y.ival, static_cast<u32>(c.ival));
+        return make_void();
+      } else if (str::cmp(method, "Line") == 0) {
+        expect(T_LPAREN);
+        Value x1 = parse_expr(); expect(T_COMMA);
+        Value y1 = parse_expr(); expect(T_COMMA);
+        Value x2 = parse_expr(); expect(T_COMMA);
+        Value y2 = parse_expr(); expect(T_COMMA);
+        Value sz = parse_expr(); expect(T_COMMA);
+        Value c = parse_expr();
+        expect(T_RPAREN);
+        if (canvas_active) canvas_line(x1.ival, y1.ival, x2.ival, y2.ival, sz.ival, static_cast<u32>(c.ival));
+        return make_void();
+      } else if (str::cmp(method, "FillRect") == 0) {
+        expect(T_LPAREN);
+        Value x = parse_expr(); expect(T_COMMA);
+        Value y = parse_expr(); expect(T_COMMA);
+        Value w = parse_expr(); expect(T_COMMA);
+        Value h = parse_expr(); expect(T_COMMA);
+        Value c = parse_expr();
+        expect(T_RPAREN);
+        if (canvas_active) canvas_fill_rect(x.ival, y.ival, w.ival, h.ival, static_cast<u32>(c.ival));
+        return make_void();
+      } else if (str::cmp(method, "Rect") == 0) {
+        expect(T_LPAREN);
+        Value x = parse_expr(); expect(T_COMMA);
+        Value y = parse_expr(); expect(T_COMMA);
+        Value w = parse_expr(); expect(T_COMMA);
+        Value h = parse_expr(); expect(T_COMMA);
+        Value c = parse_expr();
+        expect(T_RPAREN);
+        if (canvas_active) canvas_rect(x.ival, y.ival, w.ival, h.ival, static_cast<u32>(c.ival));
+        return make_void();
+      } else if (str::cmp(method, "Brush") == 0) {
+        expect(T_LPAREN);
+        Value x = parse_expr(); expect(T_COMMA);
+        Value y = parse_expr(); expect(T_COMMA);
+        Value sz = parse_expr(); expect(T_COMMA);
+        Value c = parse_expr();
+        expect(T_RPAREN);
+        if (canvas_active) canvas_brush(x.ival, y.ival, sz.ival, static_cast<u32>(c.ival));
+        return make_void();
+      } else if (str::cmp(method, "Draw") == 0) {
+        expect(T_LPAREN);
+        Value x = parse_expr(); expect(T_COMMA);
+        Value y = parse_expr();
+        expect(T_RPAREN);
+        if (canvas_active && gui_mode)
+          canvas_draw(draw_cx + x.ival, draw_cy + y.ival);
+        return make_void();
+      } else if (str::cmp(method, "Width") == 0) {
+        expect(T_LPAREN); expect(T_RPAREN);
+        Value v; v.type = V_INT; v.ival = canvas_w; return v;
+      } else if (str::cmp(method, "Height") == 0) {
+        expect(T_LPAREN); expect(T_RPAREN);
+        Value v; v.type = V_INT; v.ival = canvas_h; return v;
+      } else {
+        error("unknown Canvas method");
+      }
       return make_void();
     }
 
@@ -2212,6 +2370,16 @@ void call_arrow(char dir) {
   call_func(fn, d, 0);
 }
 
+void call_mouse_down(i32 x, i32 y) {
+  Func *fn = find_func("OnMouseDown");
+  if (fn) call_func(fn, x, y);
+}
+
+void call_mouse_move(i32 x, i32 y) {
+  Func *fn = find_func("OnMouseMove");
+  if (fn) call_func(fn, x, y);
+}
+
 bool should_close() { return close_requested; }
 
 bool has_error() { return had_error; }
@@ -2225,6 +2393,8 @@ void gui_cleanup() {
   object_count = 0;
   this_obj_idx = -1;
   ui_label_n = ui_button_n = ui_textbox_n = ui_checkbox_n = ui_panel_n = 0;
+  canvas_active = false;
+  canvas_w = canvas_h = 0;
 }
 
 } // namespace csharp

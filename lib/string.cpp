@@ -97,6 +97,65 @@ int memcmp(const void *a, const void *b, usize size) {
   return 0;
 }
 
+i32 format(char *buf, i32 size, const char *fmt, ...) {
+  if (size <= 0) return 0;
+  __builtin_va_list args;
+  __builtin_va_start(args, fmt);
+
+  i32 pos = 0;
+  auto put = [&](char c) { if (pos < size - 1) buf[pos++] = c; };
+
+  while (*fmt) {
+    if (*fmt != '%') { put(*fmt++); continue; }
+    fmt++;
+    if (*fmt == '\0') break;
+
+    switch (*fmt) {
+    case 's': {
+      const char *s = __builtin_va_arg(args, const char *);
+      if (!s) s = "(null)";
+      while (*s) put(*s++);
+      break;
+    }
+    case 'd': {
+      i64 v = static_cast<i64>(__builtin_va_arg(args, int));
+      if (v < 0) { put('-'); v = -v; }
+      char tmp[20]; i32 n = 0;
+      do { tmp[n++] = '0' + static_cast<char>(v % 10); v /= 10; } while (v);
+      while (n > 0) put(tmp[--n]);
+      break;
+    }
+    case 'u': {
+      u64 v = static_cast<u64>(__builtin_va_arg(args, unsigned int));
+      char tmp[20]; i32 n = 0;
+      do { tmp[n++] = '0' + static_cast<char>(v % 10); v /= 10; } while (v);
+      while (n > 0) put(tmp[--n]);
+      break;
+    }
+    case 'x': {
+      u64 v = static_cast<u64>(__builtin_va_arg(args, unsigned int));
+      const char *hex = "0123456789abcdef";
+      char tmp[16]; i32 n = 0;
+      do { tmp[n++] = hex[v & 0xF]; v >>= 4; } while (v);
+      while (n > 0) put(tmp[--n]);
+      break;
+    }
+    case 'c': {
+      char c = static_cast<char>(__builtin_va_arg(args, int));
+      put(c);
+      break;
+    }
+    case '%': put('%'); break;
+    default: put('%'); put(*fmt); break;
+    }
+    fmt++;
+  }
+
+  buf[pos] = '\0';
+  __builtin_va_end(args);
+  return pos;
+}
+
 } // namespace str
 
 // Required by the compiler for freestanding C++

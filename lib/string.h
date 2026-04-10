@@ -19,4 +19,8 @@ void *memset(void *ptr, int value, usize size);
 void *memcpy(void *dst, const void *src, usize size);
 int memcmp(const void *a, const void *b, usize size);
 
+// Printf-style formatting into buffer. Returns chars written (excluding NUL).
+// Supports: %s, %d, %u, %x, %c, %%
+i32 format(char *buf, i32 size, const char *fmt, ...);
+
 } // namespace str

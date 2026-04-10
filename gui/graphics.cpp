@@ -105,6 +105,35 @@ void hline(i32 x, i32 y, i32 w, u32 color) {
   fill_rect(x, y, w, 1, color);
 }
 
+void line(i32 x0, i32 y0, i32 x1, i32 y1, u32 color) {
+  i32 dx = x1 - x0;
+  i32 dy = y1 - y0;
+  i32 sx = dx >= 0 ? 1 : -1;
+  i32 sy = dy >= 0 ? 1 : -1;
+  if (dx < 0) dx = -dx;
+  if (dy < 0) dy = -dy;
+
+  if (dx >= dy) {
+    i32 err = dx / 2;
+    i32 y = y0;
+    for (i32 x = x0; ; x += sx) {
+      pixel(x, y, color);
+      if (x == x1) break;
+      err -= dy;
+      if (err < 0) { y += sy; err += dx; }
+    }
+  } else {
+    i32 err = dy / 2;
+    i32 x = x0;
+    for (i32 y = y0; ; y += sy) {
+      pixel(x, y, color);
+      if (y == y1) break;
+      err -= dx;
+      if (err < 0) { x += sx; err += dy; }
+    }
+  }
+}
+
 void draw_char(i32 x, i32 y, char c, u32 fg, u32 bg) {
   if (c < 32 || c > 126)
     c = '?';

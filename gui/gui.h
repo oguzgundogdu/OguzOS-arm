@@ -26,6 +26,9 @@ void open_app(const char *app_id);
 // path = absolute path, content = file content.
 void open_file(const char *path, const char *content);
 
+// Show a toast notification (auto-dismisses after ~3 seconds)
+void toast(const char *msg);
+
 // Query open windows for task manager
 i32 get_window_count();
 const char *get_window_title(i32 index);

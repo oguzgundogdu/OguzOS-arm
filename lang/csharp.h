@@ -38,6 +38,8 @@ void call_draw();               // OnDraw(width, height)
 void call_click(i32 x, i32 y); // OnClick(x, y)
 bool call_key(char key);        // OnKey(key) → returns true if consumed
 void call_arrow(char dir);      // OnArrow(dir)  0=up 1=down 2=right 3=left
+void call_mouse_down(i32 x, i32 y); // OnMouseDown(x, y)
+void call_mouse_move(i32 x, i32 y); // OnMouseMove(x, y)
 
 // Check if App.Close() was called
 bool should_close();

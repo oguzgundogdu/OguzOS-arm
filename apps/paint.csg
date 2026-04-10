@@ -1,0 +1,274 @@
+class Paint : Window {
+    static int tool;
+    static int brushSize;
+    static int color;
+    static bool drawing;
+    static int lastX;
+    static int lastY;
+    static int startX;
+    static int startY;
+    static int palSel;
+    static int toolSel;
+    static int sizeSel;
+    static int TOOLBAR_H;
+    static int PAL_W;
+
+    static int COL0;
+    static int COL1;
+    static int COL2;
+    static int COL3;
+    static int COL4;
+    static int COL5;
+    static int COL6;
+    static int COL7;
+    static int COL8;
+    static int COL9;
+    static int COL10;
+    static int COL11;
+    static int COL12;
+    static int COL13;
+    static int COL14;
+    static int COL15;
+
+    static void Main() {
+        tool = 0;
+        brushSize = 3;
+        color = 0x000000;
+        drawing = false;
+        lastX = 0;
+        lastY = 0;
+        startX = 0;
+        startY = 0;
+        palSel = 0;
+        toolSel = 0;
+        sizeSel = 1;
+        TOOLBAR_H = 32;
+        PAL_W = 44;
+
+        COL0 = 0x000000;
+        COL1 = 0xFFFFFF;
+        COL2 = 0xFF0000;
+        COL3 = 0x00CC00;
+        COL4 = 0x0000FF;
+        COL5 = 0xFFFF00;
+        COL6 = 0xFF00FF;
+        COL7 = 0x00CCCC;
+        COL8 = 0x808080;
+        COL9 = 0xC0C0C0;
+        COL10 = 0x880000;
+        COL11 = 0x008800;
+        COL12 = 0x000088;
+        COL13 = 0xFF8800;
+        COL14 = 0x8844FF;
+        COL15 = 0x44BBFF;
+
+        int cw = App.Width() - PAL_W;
+        int ch = App.Height() - TOOLBAR_H;
+        if (cw > 800) { cw = 800; }
+        if (ch > 600) { ch = 600; }
+        Canvas.Create(cw, ch);
+    }
+
+    static int GetPalColor(int i) {
+        if (i == 0) { return COL0; }
+        if (i == 1) { return COL1; }
+        if (i == 2) { return COL2; }
+        if (i == 3) { return COL3; }
+        if (i == 4) { return COL4; }
+        if (i == 5) { return COL5; }
+        if (i == 6) { return COL6; }
+        if (i == 7) { return COL7; }
+        if (i == 8) { return COL8; }
+        if (i == 9) { return COL9; }
+        if (i == 10) { return COL10; }
+        if (i == 11) { return COL11; }
+        if (i == 12) { return COL12; }
+        if (i == 13) { return COL13; }
+        if (i == 14) { return COL14; }
+        if (i == 15) { return COL15; }
+        return 0;
+    }
+
+    static void DrawToolbar(int w) {
+        Gfx.FillRect(0, 0, w, TOOLBAR_H, 0x2D2D2D);
+        Gfx.HLine(0, TOOLBAR_H - 1, w, 0x444444);
+
+        int bx = 4;
+        int bw = 48;
+        int bh = 22;
+        int by = 5;
+
+        int bg0 = 0x444444;
+        if (toolSel == 0) { bg0 = 0x6688AA; }
+        Gfx.FillRect(bx, by, bw, bh, bg0);
+        Gfx.DrawText(bx + 4, by + 4, "Pen", 0xFFFFFF);
+
+        int bg1 = 0x444444;
+        if (toolSel == 1) { bg1 = 0x6688AA; }
+        Gfx.FillRect(bx + 52, by, bw, bh, bg1);
+        Gfx.DrawText(bx + 56, by + 4, "Line", 0xFFFFFF);
+
+        int bg2 = 0x444444;
+        if (toolSel == 2) { bg2 = 0x6688AA; }
+        Gfx.FillRect(bx + 104, by, bw, bh, bg2);
+        Gfx.DrawText(bx + 108, by + 4, "Rect", 0xFFFFFF);
+
+        int bg3 = 0x444444;
+        if (toolSel == 3) { bg3 = 0x6688AA; }
+        Gfx.FillRect(bx + 156, by, bw, bh, bg3);
+        Gfx.DrawText(bx + 160, by + 4, "Fill", 0xFFFFFF);
+
+        int sx = 224;
+        int s0 = 0x444444;
+        if (sizeSel == 0) { s0 = 0x6688AA; }
+        Gfx.FillRect(sx, by, 28, bh, s0);
+        Gfx.DrawText(sx + 6, by + 4, "1", 0xFFFFFF);
+
+        int s1 = 0x444444;
+        if (sizeSel == 1) { s1 = 0x6688AA; }
+        Gfx.FillRect(sx + 32, by, 28, bh, s1);
+        Gfx.DrawText(sx + 38, by + 4, "3", 0xFFFFFF);
+
+        int s2 = 0x444444;
+        if (sizeSel == 2) { s2 = 0x6688AA; }
+        Gfx.FillRect(sx + 64, by, 28, bh, s2);
+        Gfx.DrawText(sx + 70, by + 4, "5", 0xFFFFFF);
+
+        Gfx.FillRect(sx + 110, by, 48, bh, 0xCC4444);
+        Gfx.DrawText(sx + 114, by + 4, "Clear", 0xFFFFFF);
+    }
+
+    static void DrawPalette(int h) {
+        int py = TOOLBAR_H;
+        Gfx.FillRect(0, py, PAL_W, h - TOOLBAR_H, 0x383838);
+        int sw = 18;
+        int pad = 2;
+        int ox = 4;
+        int i = 0;
+        while (i < 16) {
+            int col = i / 2;
+            int row = i % 2;
+            int px = ox + row * (sw + pad);
+            int ppy = py + 4 + col * (sw + pad);
+            int c = GetPalColor(i);
+            Gfx.FillRect(px, ppy, sw, sw, c);
+            if (i == palSel) {
+                Gfx.Rect(px - 1, ppy - 1, sw + 2, sw + 2, 0xFFFFFF);
+            }
+            i = i + 1;
+        }
+    }
+
+    static void OnDraw(int w, int h) {
+        Gfx.Clear(0x2A2A2A);
+        DrawToolbar(w);
+        DrawPalette(h);
+        Canvas.Draw(PAL_W, TOOLBAR_H);
+    }
+
+    static void OnMouseDown(int x, int y) {
+        if (y < TOOLBAR_H) { return; }
+        if (x < PAL_W) { return; }
+        int cx = x - PAL_W;
+        int cy = y - TOOLBAR_H;
+        drawing = true;
+        startX = cx;
+        startY = cy;
+        lastX = cx;
+        lastY = cy;
+        if (tool == 0) {
+            Canvas.Brush(cx, cy, brushSize, color);
+        }
+    }
+
+    static void OnMouseMove(int x, int y) {
+        if (!drawing) { return; }
+        int cx = x - PAL_W;
+        int cy = y - TOOLBAR_H;
+        if (tool == 0) {
+            Canvas.Line(lastX, lastY, cx, cy, brushSize, color);
+            lastX = cx;
+            lastY = cy;
+        }
+    }
+
+    static void OnClick(int x, int y) {
+        if (y < TOOLBAR_H) {
+            int by = 5;
+            int bh = 22;
+            if (y >= by && y < by + bh) {
+                if (x >= 4 && x < 52) { toolSel = 0; tool = 0; }
+                if (x >= 56 && x < 104) { toolSel = 1; tool = 1; }
+                if (x >= 108 && x < 156) { toolSel = 2; tool = 2; }
+                if (x >= 160 && x < 208) { toolSel = 3; tool = 3; }
+                if (x >= 224 && x < 252) { sizeSel = 0; brushSize = 1; }
+                if (x >= 256 && x < 284) { sizeSel = 1; brushSize = 3; }
+                if (x >= 288 && x < 316) { sizeSel = 2; brushSize = 5; }
+                if (x >= 334 && x < 382) {
+                    Canvas.Clear(0xFFFFFF);
+                }
+            }
+            drawing = false;
+            return;
+        }
+        if (x < PAL_W) {
+            int py = TOOLBAR_H + 4;
+            int sw = 18;
+            int pad = 2;
+            int i = 0;
+            while (i < 16) {
+                int col = i / 2;
+                int row = i % 2;
+                int px = 4 + row * (sw + pad);
+                int ppy = py + col * (sw + pad);
+                if (x >= px && x < px + sw && y >= ppy && y < ppy + sw) {
+                    palSel = i;
+                    color = GetPalColor(i);
+                }
+                i = i + 1;
+            }
+            drawing = false;
+            return;
+        }
+        if (drawing) {
+            int cx = x - PAL_W;
+            int cy = y - TOOLBAR_H;
+            if (tool == 1) {
+                Canvas.Line(startX, startY, cx, cy, brushSize, color);
+            }
+            if (tool == 2) {
+                int rx = startX;
+                int ry = startY;
+                int rw = cx - startX;
+                int rh = cy - startY;
+                if (rw < 0) { rx = cx; rw = 0 - rw; }
+                if (rh < 0) { ry = cy; rh = 0 - rh; }
+                Canvas.Rect(rx, ry, rw, rh, color);
+            }
+            if (tool == 3) {
+                int rx = startX;
+                int ry = startY;
+                int rw = cx - startX;
+                int rh = cy - startY;
+                if (rw < 0) { rx = cx; rw = 0 - rw; }
+                if (rh < 0) { ry = cy; rh = 0 - rh; }
+                Canvas.FillRect(rx, ry, rw, rh, color);
+            }
+            drawing = false;
+        }
+    }
+
+    static void OnKey(int k) {
+        if (k == 112) { toolSel = 0; tool = 0; }
+        if (k == 108) { toolSel = 1; tool = 1; }
+        if (k == 114) { toolSel = 2; tool = 2; }
+        if (k == 102) { toolSel = 3; tool = 3; }
+        if (k == 99) { Canvas.Clear(0xFFFFFF); }
+        if (k == 43) {
+            if (brushSize < 5) { brushSize = brushSize + 2; sizeSel = sizeSel + 1; }
+        }
+        if (k == 45) {
+            if (brushSize > 1) { brushSize = brushSize - 2; sizeSel = sizeSel - 1; }
+        }
+    }
+}

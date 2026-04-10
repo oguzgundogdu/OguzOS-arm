@@ -298,6 +298,10 @@ void input_dialog_close() {
   input_dialog_open = false;
 }
 
+// ── Toast notification state ──
+char toast_msg[64];
+i32 toast_frames = 0;   // frames remaining (0 = hidden)
+
 void confirm_dialog_close() {
   confirm_dialog_open = false;
 }
@@ -1227,6 +1231,33 @@ void draw_confirm_dialog() {
   gfx::draw_text(no_x + (btn_w - fw * 6) / 2, btn_y + 4, "Cancel", no_fg, no_bg);
 }
 
+void draw_toast() {
+  if (toast_frames <= 0) return;
+  toast_frames--;
+
+  i32 fh = gfx::font_h();
+  i32 tw = gfx::text_width(toast_msg);
+  i32 pad = 12;
+  i32 w = tw + pad * 2;
+  i32 h = fh + pad;
+  i32 sw = static_cast<i32>(fb::width());
+  i32 sh = static_cast<i32>(fb::height());
+  i32 x = sw - w - 16;
+  i32 y = sh - TASKBAR_H - h - 12;
+
+  // Fade out in last 30 frames
+  u32 bg = 0x00222222;
+  u32 fg = 0x00FFFFFF;
+
+  // Shadow
+  gfx::fill_rect(x + 2, y + 2, w, h, 0x00111111);
+  // Background
+  gfx::fill_rect(x, y, w, h, bg);
+  gfx::rect(x, y, w, h, 0x00555555);
+  // Text
+  gfx::draw_text(x + pad, y + pad / 2, toast_msg, fg, bg);
+}
+
 void render() {
   draw_desktop();
   for (i32 i = 0; i < window_count; i++) {
@@ -1260,6 +1291,7 @@ void render() {
   draw_context_menu();
   draw_input_dialog();
   draw_confirm_dialog();
+  draw_toast();
   draw_cursor();
 }
 
@@ -2549,6 +2581,11 @@ const char *get_window_app_id(i32 index) {
   if (windows[index].type == WIN_APP && windows[index].app)
     return windows[index].app->id;
   return nullptr;
+}
+
+void toast(const char *msg) {
+  str::ncpy(toast_msg, msg, 63);
+  toast_frames = 180; // ~3 seconds at 60fps
 }
 
 } // namespace gui

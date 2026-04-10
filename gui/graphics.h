@@ -23,6 +23,7 @@ void pixel(i32 x, i32 y, u32 color);
 void fill_rect(i32 x, i32 y, i32 w, i32 h, u32 color);
 void rect(i32 x, i32 y, i32 w, i32 h, u32 color);
 void hline(i32 x, i32 y, i32 w, u32 color);
+void line(i32 x0, i32 y0, i32 x1, i32 y1, u32 color);
 void draw_char(i32 x, i32 y, char c, u32 fg, u32 bg);
 void draw_text(i32 x, i32 y, const char *text, u32 fg, u32 bg);
 void draw_text_nobg(i32 x, i32 y, const char *text, u32 fg);

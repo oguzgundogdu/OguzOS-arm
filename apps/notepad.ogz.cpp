@@ -3,8 +3,10 @@
 #ifdef USERSPACE
 #include "userapi.h"
 #else
+#include "clipboard.h"
 #include "fs.h"
 #include "graphics.h"
+#include "gui.h"
 #include "string.h"
 #include "syslog.h"
 #endif
@@ -357,7 +359,8 @@ bool notepad_key(u8 *state, char key) {
         for (const char *p = s->saveas_buf; *p; p++)
           if (*p == '/') name = p + 1;
         str::ncpy(s->filename, name, 63);
-        save_file(s);
+        if (save_file(s))
+          gui::toast("File saved");
       }
       s->saveas_open = false;
       return true;
@@ -380,7 +383,8 @@ bool notepad_key(u8 *state, char key) {
   // ── Ctrl+S: Save ──
   if (key == 0x13) {
     if (s->filepath[0]) {
-      save_file(s);
+      if (save_file(s))
+        gui::toast("File saved");
     } else {
       // No path yet — open Save As
       s->saveas_open = true;
@@ -406,6 +410,58 @@ bool notepad_key(u8 *state, char key) {
   if (key == 0x01) {
     s->sel_start = 0;
     s->cursor = s->len;
+    return true;
+  }
+
+  // ── Ctrl+C: Copy ──
+  if (key == 0x03) {
+    i32 lo, hi;
+    if (sel_range(s, lo, hi)) {
+      char tmp[TEXT_MAX];
+      i32 n = hi - lo;
+      if (n > TEXT_MAX - 1) n = TEXT_MAX - 1;
+      str::memcpy(tmp, s->text + lo, static_cast<usize>(n));
+      tmp[n] = '\0';
+      clipboard::copy(tmp);
+    }
+    return true;
+  }
+
+  // ── Ctrl+X: Cut ──
+  if (key == 0x18) {
+    i32 lo, hi;
+    if (sel_range(s, lo, hi)) {
+      char tmp[TEXT_MAX];
+      i32 n = hi - lo;
+      if (n > TEXT_MAX - 1) n = TEXT_MAX - 1;
+      str::memcpy(tmp, s->text + lo, static_cast<usize>(n));
+      tmp[n] = '\0';
+      clipboard::copy(tmp);
+      delete_range(s, lo, hi);
+    }
+    return true;
+  }
+
+  // ── Ctrl+V: Paste ──
+  if (key == 0x16) {
+    // Delete selection first if present
+    i32 lo, hi;
+    if (sel_range(s, lo, hi))
+      delete_range(s, lo, hi);
+
+    const char *clip = clipboard::paste();
+    i32 clen = static_cast<i32>(str::len(clip));
+    if (clen > 0 && s->len + clen < TEXT_MAX) {
+      // Make room
+      for (i32 i = s->len; i >= s->cursor; i--)
+        s->text[i + clen] = s->text[i];
+      str::memcpy(s->text + s->cursor, clip, static_cast<usize>(clen));
+      s->len += clen;
+      s->cursor += clen;
+      s->text[s->len] = '\0';
+      s->dirty = true;
+    }
+    clear_selection(s);
     return true;
   }
 

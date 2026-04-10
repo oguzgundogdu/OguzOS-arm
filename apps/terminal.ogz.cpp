@@ -5,6 +5,7 @@
 #include "userapi.h"
 #else
 #include "assoc.h"
+#include "clipboard.h"
 #include "commands.h"
 #include "disk.h"
 #include "env.h"
@@ -762,6 +763,18 @@ bool terminal_key(u8 *state, char key) {
       s->cmd_len--;
       s->cmd[s->cmd_len] = '\0';
     }
+    return true;
+  }
+
+  // Ctrl+V: Paste from clipboard
+  if (key == 0x16) {
+    const char *clip = clipboard::paste();
+    while (*clip && s->cmd_len < 199) {
+      if (*clip >= 32 && *clip <= 126)
+        s->cmd[s->cmd_len++] = *clip;
+      clip++;
+    }
+    s->cmd[s->cmd_len] = '\0';
     return true;
   }
 

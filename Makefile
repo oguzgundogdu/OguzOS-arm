@@ -102,9 +102,11 @@ OBJS = $(BUILD_DIR)/boot.o \
        $(BUILD_DIR)/assoc.o \
        $(BUILD_DIR)/menu.o \
        $(BUILD_DIR)/ui.o \
+       $(BUILD_DIR)/clipboard.o \
        $(BUILD_DIR)/commands.o \
        $(BUILD_DIR)/shell.o \
        $(BUILD_DIR)/calculator_embed.o \
+       $(BUILD_DIR)/paint_embed.o \
        $(BUILD_DIR)/ogzlib_embed.o \
        $(BUILD_DIR)/kernel.o
 
@@ -223,6 +225,9 @@ $(BUILD_DIR)/menu.o: $(LIB_DIR)/menu.cpp | $(BUILD_DIR)
 $(BUILD_DIR)/ui.o: $(LIB_DIR)/ui.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/clipboard.o: $(LIB_DIR)/clipboard.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/commands.o: $(SHELL_DIR)/commands.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -239,6 +244,9 @@ $(BUILD_DIR)/csgui.o: $(APPS_DIR)/csgui.ogz.cpp | $(BUILD_DIR)
 	$(CXX) $(USERFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/calculator_embed.o: $(APPS_DIR)/calculator_embed.S $(APPS_DIR)/calculator.cs | $(BUILD_DIR)
+	$(AS) $(ASFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/paint_embed.o: $(APPS_DIR)/paint_embed.S $(APPS_DIR)/paint.csg | $(BUILD_DIR)
 	$(AS) $(ASFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/ogzlib_embed.o: $(LIB_DIR)/ogzlib_embed.S $(LIB_DIR)/OguzOS.UI.ogzl | $(BUILD_DIR)
