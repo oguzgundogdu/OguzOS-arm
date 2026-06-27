@@ -7,7 +7,7 @@ A minimal operating system written in freestanding C++17 for ARM64 (AArch64), fe
 - **Graphical desktop** with window manager, taskbar, and start menu
 - **7 built-in GUI apps**: Notepad, Terminal, Task Manager, Settings, Browser, C# IDE, C# GUI Host
 - **Interactive shell** with 50+ built-in commands and command history
-- **In-memory filesystem** with directories, files, and disk persistence
+- **In-memory filesystem** with directories, files (8KB each), and disk persistence
 - **Network stack**: Ethernet, ARP, IPv4, ICMP, UDP, DHCP, DNS, HTTP, NTP
 - **Mini C# interpreter** with console and GUI modes, plus a widget system
 - **UART console** via PL011 with ANSI color support
@@ -110,7 +110,7 @@ A minimal operating system written in freestanding C++17 for ARM64 (AArch64), fe
 | **Task Manager** | System monitor showing hardware status, open windows, and resource usage |
 | **Settings** | System configuration (timezone, display, keyboard, background, file types, menu) |
 | **Browser** | Web browser via yamur-proxy (Node.js + Puppeteer) |
-| **C# IDE** | Code editor with syntax highlighting, templates, and run support |
+| **C# IDE** | Code editor with syntax highlighting, autocomplete, templates, toolbar (Run / Save / Save As), and a solution explorer for multi-file `.sln` projects |
 | **C# GUI Host** | Runs interactive C# GUI programs (.csg) with widget support |
 
 ## C# Interpreter
@@ -119,11 +119,13 @@ OguzOS includes a mini C# interpreter with two execution modes:
 
 **Console mode** — `csrun file.cs`
 - `Console.WriteLine()` / `Console.Write()` for output
+- `int.Parse(string)` to convert strings to integers
 
 **GUI mode** — `csgui file.csg`
-- Drawing: `Gfx.Clear`, `Gfx.FillRect`, `Gfx.Rect`, `Gfx.DrawText`, `Gfx.Pixel`, `Gfx.Line`
+- Drawing: `Gfx.Clear`, `Gfx.FillRect`, `Gfx.Rect`, `Gfx.DrawText`, `Gfx.Pixel`, `Gfx.Line`, `Gfx.HLine`
 - Callbacks: `OnDraw`, `OnClick`, `OnKey`, `OnArrow`
 - Widgets: `Label`, `Button`, `TextBox`, `CheckBox`, `Panel` (max 16 per program)
+- Widget methods: `.SetText()`, `.GetText()`, `.SetPos()`, `.SetSize()`, `.SetColor()`, `.IsChecked()`, `.Toggle()`
 - System: `App.Close()`, `App.Width()`, `App.Height()`
 
 ## Building
@@ -184,7 +186,7 @@ Set these in UTM's QEMU settings:
 arch/       — ARM64 bootstrap (boot.S), exception vectors, linker script
 kernel/     — Kernel entry point (kernel_main)
 drivers/    — PL011 UART, Virtio block/net, ramfb, virtio-tablet, virtio-keyboard
-fs/         — In-memory hierarchical filesystem (128 nodes, 4KB/file, disk persistence)
+fs/         — In-memory hierarchical filesystem (128 nodes, 8KB/file, disk persistence)
 net/        — Network stack (ARP, IPv4, ICMP, UDP, DHCP, DNS, HTTP, NTP)
 gui/        — Window manager, desktop, taskbar, start menu, file explorer
 apps/       — GUI applications (Notepad, Terminal, Task Manager, Settings, Browser, C# IDE, C# GUI Host)
@@ -207,7 +209,7 @@ build/      — Generated object files and binaries (gitignored)
 - **PSCI calls** for halt/reboot
 - **Double-buffered graphics** via ramfb (up to 1920×1080)
 - **Network**: DHCP auto-config, DNS resolution, NTP time sync, HTTP client
-- **Filesystem**: 128 nodes, 4KB per file, persisted to virtio-blk disk
+- **Filesystem**: 128 nodes, 8KB per file, persisted to virtio-blk disk
 
 ## License
 
