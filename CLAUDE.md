@@ -116,7 +116,7 @@ Apps use the `.ogz.cpp` naming convention and follow a function-pointer interfac
 
 **App registry** holds up to 16 apps (`MAX_APPS`). Registration calls `apps::register_app(&app_struct)` which stores the pointer and creates the `/bin/` entry.
 
-**OgzApp callbacks:** `on_open`, `on_draw`, `on_key`, `on_arrow`, `on_close` are required; `on_click`, `on_scroll`, `on_mouse_down`, `on_mouse_move`, `on_open_file` can be `nullptr`. `on_key` returns `bool` (true if the key was consumed). Each app window gets a 4096-byte `app_state` buffer — use `static_assert(sizeof(MyState) <= 4096)` to enforce.
+**OgzApp callbacks:** `on_open`, `on_draw`, `on_key`, `on_arrow`, `on_close` are required; `on_click`, `on_scroll`, `on_mouse_down`, `on_mouse_move`, `on_open_file` can be `nullptr`. `on_key` returns `bool` (true if the key was consumed). Each app window gets an 8192-byte `app_state` buffer — use `static_assert(sizeof(MyState) <= 8192)` to enforce.
 
 **`on_open_file`** — optional callback `void (*)(u8 *state, const char *path, const char *content)` called after `on_open` when the app is launched to open a specific file. Used by Notepad (text editing) and Terminal (command execution).
 
